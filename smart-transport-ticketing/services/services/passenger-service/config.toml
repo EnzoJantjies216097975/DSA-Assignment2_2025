@@ -1,0 +1,13 @@
+[db]
+url = "mongodb://admin:secretpassword@mongodb:27017"
+database = "transport_ticketing"
+
+[kafka]
+bootstrap_servers = "kafka:29092"
+
+[server]
+port = 8081
+
+[jwt]
+secret = "your-secret-key-change-in-production"
+issuer = "smart-transport-system"
