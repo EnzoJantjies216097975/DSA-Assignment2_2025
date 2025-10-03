@@ -114,3 +114,45 @@ db.payments.createIndex({ "paymentId": 1 }, { unique: true });
 db.payments.createIndex({ "userId": 1 });
 
 print("Transport Ticketing Database initialized successfully!");
+
+// Add sample data for testing
+db.routes.insertMany([
+  {
+    routeId: "BUS-001",
+    routeName: "City Circle",
+    transportType: "BUS",
+    startPoint: "Central Station",
+    endPoint: "Central Station",
+    intermediateStops: [
+      { stopId: "S001", stopName: "University", sequence: 1 },
+      { stopId: "S002", stopName: "Shopping Mall", sequence: 2 },
+      { stopId: "S003", stopName: "Hospital", sequence: 3 }
+    ],
+    isActive: true,
+    createdAt: new Date(),
+    updatedAt: new Date()
+  },
+  {
+    routeId: "TRAIN-001",
+    routeName: "Airport Express",
+    transportType: "TRAIN",
+    startPoint: "City Center",
+    endPoint: "Airport",
+    intermediateStops: [],
+    isActive: true,
+    createdAt: new Date(),
+    updatedAt: new Date()
+  }
+]);
+
+// Add admin user for testing
+db.users.insertOne({
+  username: "admin",
+  email: "admin@transport.com",
+  password: "admin123", // Remember to hash in production
+  role: "ADMIN",
+  fullName: "System Administrator",
+  permissions: ["ALL"],
+  createdAt: new Date(),
+  updatedAt: new Date()
+});

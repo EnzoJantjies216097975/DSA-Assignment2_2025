@@ -1,15 +1,13 @@
-# docker-compose.yml
 version: "3.8"
 
 services:
   # Zookeeper is required by Kafka for coordination
-  # Think of it as Kafka's personal assistant, keeping track of configurations
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     container_name: zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000 # Heartbeat interval in milliseconds
+      ZOOKEEPER_TICK_TIME: 2000
     networks:
       - transport-network
     healthcheck:
@@ -164,3 +162,16 @@ volumes:
     driver: local
   kafka-data:
     driver: local
+
+kafka-ui:
+  image: provectuslabs/kafka-ui:latest
+  container_name: kafka-ui
+  ports:
+    - "8080:8080"
+  environment:
+    KAFKA_CLUSTERS_0_NAME: local
+    KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+  depends_on:
+    - kafka
+  networks:
+    - transport-network

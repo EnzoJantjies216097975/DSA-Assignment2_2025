@@ -100,3 +100,30 @@ Students can shine by adding:
 - There should be no assumption about the execution environment of your code. It could be run using a specific framework or on the command line.
 - In the case of plagiarism (groups copying from each other or submissions copied from the Internet), all submissions involved will be awarded the mark 0, and each student will receive a warning.
 - 100% AI-generated codes will be awarded a zero. AI tools should be used as a guide only.
+
+Quick Start Commands:
+
+# Build and start all services
+```
+ docker-compose up --build
+```
+
+# Start in detached mode
+```
+ docker-compose up -d --build
+```
+ 
+# View logs for a specific service
+```
+docker-compose logs -f passenger-service
+```
+
+# Stop all services
+```
+docker-compose down
+```
+
+# Stop and remove all data
+```
+docker-compose down -v
+```
