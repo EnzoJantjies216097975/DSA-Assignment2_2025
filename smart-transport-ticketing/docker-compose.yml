@@ -175,3 +175,25 @@ kafka-ui:
     - kafka
   networks:
     - transport-network
+
+  # CLI Client Application (optional - for testing)
+  cli-client:
+    build: ./services/cli-client
+    container_name: cli-client
+    environment:
+      - PASSENGER_SERVICE=http://passenger-service:8081
+      - TRANSPORT_SERVICE=http://transport-service:8082
+      - TICKETING_SERVICE=http://ticketing-service:8083
+      - PAYMENT_SERVICE=http://payment-service:8084
+      - ADMIN_SERVICE=http://admin-service:9090
+    depends_on:
+      - passenger-service
+      - transport-service
+      - ticketing-service
+      - payment-service
+      - notification-service
+      - admin-service
+    networks:
+      - transport-network
+    stdin_open: true # Keep STDIN open for interactive mode
+    tty: true # Allocate a pseudo-TTY for interactive mode
