@@ -1,8 +1,18 @@
 [package]
-org = "enzoj"
-name = "transport_service"
-version = "0.1.0"
 distribution = "2201.12.9"
+name = "transport_service"
+org = "enzoj"
+version = "0.1.0"
 
 [build-options]
 observabilityIncluded = true
+
+[[dependency]]
+name = "kafka"
+org = "ballerinax"
+version = "3.8.0"
+
+[[dependency]]
+name = "mongodb"
+org = "ballerinax"
+version = "8.0.0"

@@ -1,0 +1,166 @@
+# docker-compose.yml
+version: "3.8"
+
+services:
+  # Zookeeper is required by Kafka for coordination
+  # Think of it as Kafka's personal assistant, keeping track of configurations
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000 # Heartbeat interval in milliseconds
+    networks:
+      - transport-network
+    healthcheck:
+      test: ["CMD", "echo", "ruok", "|", "nc", "localhost", "2181"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Kafka is our event streaming platform
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_started
+    ports:
+      - "9092:9092" # Internal Docker network port
+      - "29092:29092" # External access port for debugging
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false" # We'll create topics explicitly
+      KAFKA_LOG_RETENTION_HOURS: 168 # Keep logs for 7 days
+    networks:
+      - transport-network
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "kafka-broker-api-versions",
+          "--bootstrap-server",
+          "localhost:9092",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    volumes:
+      - kafka-data:/var/lib/kafka/data # Persist Kafka data
+
+  # Initialize Kafka topics
+  kafka-init:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka-init
+    depends_on:
+      kafka:
+        condition: service_healthy
+    networks:
+      - transport-network
+    volumes:
+      - ./infrastructure/kafka/create-topics.sh:/create-topics.sh
+    entrypoint: ["/bin/bash", "/create-topics.sh"]
+    restart: "no" # Run once and exit
+
+  # MongoDB for data persistence
+  mongodb:
+    image: mongo:6.0
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_DATABASE: transport_ticketing
+      # In production, use secrets for credentials
+      # MONGO_INITDB_ROOT_USERNAME: admin
+      # MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+    volumes:
+      - ./infrastructure/mongodb/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+      - mongodb-data:/data/db # Persist database files
+      - mongodb-config:/data/configdb # Persist configuration
+    networks:
+      - transport-network
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Passenger Service
+  passenger-service:
+    build:
+      context: ./services/passenger-service
+      dockerfile: Dockerfile
+    container_name: passenger-service
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - "8080:8080"
+    environment:
+      - mongoHost=mongodb
+      - mongoPort=27017
+      - dbName=transport_ticketing
+      - kafkaBootstrapServers=kafka:9092
+    networks:
+      - transport-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/passenger/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Transport Service
+  transport-service:
+    build:
+      context: ./services/transport-service
+      dockerfile: Dockerfile
+    container_name: transport-service
+    depends_on:
+      mongodb:
+        condition: service_healthy
+      kafka-init:
+        condition: service_completed_successfully
+    ports:
+      - "8081:8081"
+    environment:
+      - mongoHost=mongodb
+      - mongoPort=27017
+      - dbName=transport_ticketing
+      - kafkaBootstrapServers=kafka:9092
+    networks:
+      - transport-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/transport/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Add other services here following the same pattern...
+
+# Define the network for inter-service communication
+networks:
+  transport-network:
+    driver: bridge
+    ipam:
+      driver: default
+      config:
+        - subnet: 172.20.0.0/16 # Custom subnet for predictable IPs
+
+# Define named volumes for data persistence
+volumes:
+  mongodb-data:
+    driver: local
+  mongodb-config:
+    driver: local
+  kafka-data:
+    driver: local
