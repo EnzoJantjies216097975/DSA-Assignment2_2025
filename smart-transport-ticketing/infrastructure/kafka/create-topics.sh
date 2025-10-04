@@ -1,59 +1,30 @@
+#!/bin/bash
+
+echo "Starting Kafka topic creation..."
 echo "Waiting for Kafka to be ready..."
-sleep 15
 
- Create topic for ticket purchase requests
-# Partitions=3 means Kafka can process 3 ticket requests in parallel
-echo "Creating ticket.requests topic..."
-kafka-topics.sh --create \
-    --topic ticket.requests \
-    --bootstrap-server kafka:9092 \
-    --partitions 3 \
-    --replication-factor 1 \
-    --config retention.ms=604800000  # Keep messages for 7 days
+MAX_ATTEMPTS=30
+ATTEMPT=0
+KAFKA_SERVER="kafka:9092"
 
-# Create topic for payment confirmations
-echo "Creating payments.processed topic..."
-kafka-topics.sh --create \
-    --topic payments.processed \
-    --bootstrap-server kafka:9092 \
-    --partitions 3 \
-    --replication-factor 1
+# Wait for Kafka to be ready
+until kafka-topics.sh --list --bootstrap-server $KAFKA_SERVER > /dev/null 2>&1; do
+    ATTEMPT=$((ATTEMPT + 1))
+    if [ $ATTEMPT -ge $MAX_ATTEMPTS ]; then
+        echo "ERROR: Kafka not ready after $MAX_ATTEMPTS attempts"
+        exit 1
+    fi
+    echo "Waiting for Kafka... (attempt $ATTEMPT/$MAX_ATTEMPTS)"
+    sleep 5
+done
 
-# Create topic for ticket validations (when passengers board)
-echo "Creating tickets.validated topic..."
-kafka-topics.sh --create \
-    --topic tickets.validated \
-    --bootstrap-server kafka:9092 \
-    --partitions 3 \
-    --replication-factor 1
+echo "Kafka is ready! Creating topics..."
 
-# Create topic for schedule updates
-echo "Creating schedule.updates topic..."
-kafka-topics.sh --create \
-    --topic schedule.updates \
-    --bootstrap-server kafka:9092 \
-    --partitions 2 \
-    --replication-factor 1
+# Create essential topics only
+kafka-topics.sh --create --topic ticket.requests --bootstrap-server $KAFKA_SERVER --partitions 3 --replication-factor 1
+kafka-topics.sh --create --topic payments.processed --bootstrap-server $KAFKA_SERVER --partitions 3 --replication-factor 1
+kafka-topics.sh --create --topic ticket.validations --bootstrap-server $KAFKA_SERVER --partitions 3 --replication-factor 1
+kafka-topics.sh --create --topic passenger.registrations --bootstrap-server $KAFKA_SERVER --partitions 2 --replication-factor 1
 
-# Create topic for service disruptions (delays, cancellations)
-echo "Creating service.disruptions topic..."
-kafka-topics.sh --create \
-    --topic service.disruptions \
-    --bootstrap-server kafka:9092 \
-    --partitions 2 \
-    --replication-factor 1
-
-# Create topic for notifications
-echo "Creating notifications.send topic..."
-kafka-topics.sh --create \
-    --topic notifications.send \
-    --bootstrap-server kafka:9092 \
-    --partitions 3 \
-    --replication-factor 1
-
-echo "All Kafka topics created successfully!"
-
-# List all topics to confirm creation
-echo "Listing all topics:"
-kafka-topics.sh --list --bootstrap-server kafka:9092
-
+echo "Topics created successfully!"
+kafka-topics.sh --list --bootstrap-server $KAFKA_SERVER
