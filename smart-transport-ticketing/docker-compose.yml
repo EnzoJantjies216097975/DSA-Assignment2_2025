@@ -1,199 +1,119 @@
-version: "3.8"
-
 services:
-  # Zookeeper is required by Kafka for coordination
   zookeeper:
     image: confluentinc/cp-zookeeper:7.5.0
     container_name: zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
     networks:
       - transport-network
-    healthcheck:
-      test: ["CMD", "echo", "ruok", "|", "nc", "localhost", "2181"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
-  # Kafka is our event streaming platform
   kafka:
-    image: confluentinc/cp-kafka:7.5.0
+    image: wurstmeister/kafka:2.13-2.8.1
     container_name: kafka
     depends_on:
-      zookeeper:
-        condition: service_started
+      - zookeeper
     ports:
-      - "9092:9092" # Internal Docker network port
-      - "29092:29092" # External access port for debugging
+      - "9092:9092"
     environment:
       KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: "zookeeper:2181"
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
-      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false" # We'll create topics explicitly
-      KAFKA_LOG_RETENTION_HOURS: 168 # Keep logs for 7 days
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
     networks:
       - transport-network
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "kafka-broker-api-versions",
-          "--bootstrap-server",
-          "localhost:9092",
-        ]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-    volumes:
-      - kafka-data:/var/lib/kafka/data # Persist Kafka data
 
-  # Initialize Kafka topics
   kafka-init:
-    image: confluentinc/cp-kafka:7.5.0
+    image: wurstmeister/kafka:2.13-2.8.1
     container_name: kafka-init
     depends_on:
       kafka:
-        condition: service_healthy
+        condition: service_started
     networks:
       - transport-network
     volumes:
       - ./infrastructure/kafka/create-topics.sh:/create-topics.sh
-    entrypoint: ["/bin/bash", "/create-topics.sh"]
-    restart: "no" # Run once and exit
+    entrypoint: ["/bin/bash", "-c", "chmod +x /create-topics.sh && sleep 30 && /create-topics.sh"]
+    restart: "no"
 
-  # MongoDB for data persistence
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "8090:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
+      KAFKA_CLUSTERS_0_ZOOKEEPER: zookeeper:2181
+    networks:
+      - transport-network
+
   mongodb:
     image: mongo:6.0
     container_name: mongodb
     ports:
       - "27017:27017"
     environment:
-      MONGO_INITDB_DATABASE: transport_ticketing
-      # In production, use secrets for credentials
-      # MONGO_INITDB_ROOT_USERNAME: admin
-      # MONGO_INITDB_ROOT_PASSWORD: ${MONGO_PASSWORD}
+      MONGO_INITDB_DATABASE: ${MONGO_DATABASE}
     volumes:
       - ./infrastructure/mongodb/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
-      - mongodb-data:/data/db # Persist database files
-      - mongodb-config:/data/configdb # Persist configuration
+      - mongodb-data:/data/db
+      - mongodb-config:/data/configdb
     networks:
       - transport-network
-    healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
-  # Passenger Service
   passenger-service:
     build:
       context: ./services/passenger-service
       dockerfile: Dockerfile
     container_name: passenger-service
     depends_on:
-      mongodb:
-        condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
+      - mongodb
+      - kafka-init
     ports:
       - "8080:8080"
     environment:
-      - mongoHost=mongodb
-      - mongoPort=27017
-      - dbName=transport_ticketing
-      - kafkaBootstrapServers=kafka:9092
+      - MONGO_HOST=${MONGO_HOST}
+      - MONGO_PORT=${MONGO_PORT}
+      - MONGO_DATABASE=${MONGO_DATABASE}
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_ISSUER=${JWT_ISSUER}
     networks:
       - transport-network
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/passenger/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
-  # Transport Service
   transport-service:
     build:
       context: ./services/transport-service
       dockerfile: Dockerfile
     container_name: transport-service
     depends_on:
-      mongodb:
-        condition: service_healthy
-      kafka-init:
-        condition: service_completed_successfully
+      - mongodb
+      - kafka-init
     ports:
       - "8081:8081"
     environment:
-      - mongoHost=mongodb
-      - mongoPort=27017
-      - dbName=transport_ticketing
-      - kafkaBootstrapServers=kafka:9092
+      - MONGO_HOST=${MONGO_HOST}
+      - MONGO_PORT=${MONGO_PORT}
+      - MONGO_DATABASE=${MONGO_DATABASE}
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS}
     networks:
       - transport-network
     restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8081/transport/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
 
-  # Add other services here following the same pattern...
-
-# Define the network for inter-service communication
 networks:
   transport-network:
     driver: bridge
-    ipam:
-      driver: default
-      config:
-        - subnet: 172.20.0.0/16 # Custom subnet for predictable IPs
 
-# Define named volumes for data persistence
 volumes:
   mongodb-data:
     driver: local
   mongodb-config:
     driver: local
-  kafka-data:
-    driver: local
-
-kafka-ui:
-  image: provectuslabs/kafka-ui:latest
-  container_name: kafka-ui
-  ports:
-    - "8080:8080"
-  environment:
-    KAFKA_CLUSTERS_0_NAME: local
-    KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
-  depends_on:
-    - kafka
-  networks:
-    - transport-network
-
-  # CLI Client Application (optional - for testing)
-  cli-client:
-    build: ./services/cli-client
-    container_name: cli-client
-    environment:
-      - PASSENGER_SERVICE=http://passenger-service:8081
-      - TRANSPORT_SERVICE=http://transport-service:8082
-      - TICKETING_SERVICE=http://ticketing-service:8083
-      - PAYMENT_SERVICE=http://payment-service:8084
-      - ADMIN_SERVICE=http://admin-service:9090
-    depends_on:
-      - passenger-service
-      - transport-service
-      - ticketing-service
-      - payment-service
-      - notification-service
-      - admin-service
-    networks:
-      - transport-network
-    stdin_open: true # Keep STDIN open for interactive mode
-    tty: true # Allocate a pseudo-TTY for interactive mode
