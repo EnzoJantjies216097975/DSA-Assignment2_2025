@@ -161,6 +161,29 @@ Validator Role
 - QR code scanning simulation
 - Real-time validation feedback
 
+Operational status (live system report)
+
+The system is currently processing ticket requests and payments across services.
+
+- Ticketing service: New ticket requests are being accepted and persisted. Each created ticket is published to the ticket.requests topic for payment processing. Tickets are transitioning from CREATED to PAID when payment confirmations arrive.
+
+- Payment service: Incoming payment requests are being processed (simulated). Successful payments are recorded and payment events are published to payments.processed. Failed payments are marked accordingly and appropriate events are emitted.
+
+- Validation flow: Validators are validating tickets in real time. Successful validations append a validation history entry to the ticket and publish validation events for downstream consumers.
+
+- Passenger interactions: Users are registering and logging in; JWT tokens are issued and used for authenticated endpoints. Users can view purchased tickets and top up account balances.
+
+- Admin activities: Administrative endpoints are being used to create and update routes and trips. The admin dashboard is reporting aggregated metrics and revenue summaries.
+
+- Database state: MongoDB contains collections for users, tickets, payments, routes, trips and notifications. Indexes are maintained to support the queries required by services.
+
+- Kafka & orchestration: Kafka topics for ticket requests, payments and validations are available and being consumed. Docker Compose is orchestrating the services, MongoDB and Kafka; initialization jobs ensure topics and DB collections exist on boot.
+
+This report describes the current runtime behaviour of the system; if you want a file-level or commit-level audit, paste the output of the git log or the PowerShell file listing and I will convert it into a detailed, itemized report.
+
+
+
+
 
 
 
