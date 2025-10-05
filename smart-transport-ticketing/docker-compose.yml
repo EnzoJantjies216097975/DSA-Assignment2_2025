@@ -136,64 +136,64 @@ services:
     build:
       context: ./services/payment-service
       dockerfile: Dockerfile
-  container_name: payment-service
-  depends_on:
-    - mongodb
-    - kafka-init
-  ports:
-    - "8084:8084"
-  environment:
-    - MONGO_HOST=${MONGO_HOST}
-    - MONGO_PORT=${MONGO_PORT}
-    - MONGO_DATABASE=${MONGO_DATABASE}
-    - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS}
-  networks:
-    - transport-network
-  restart: unless-stopped
+    container_name: payment-service
+    depends_on:
+      - mongodb
+      - kafka-init
+    ports:
+      - "8084:8084"
+    environment:
+      - MONGO_HOST=${MONGO_HOST}
+      - MONGO_PORT=${MONGO_PORT}
+      - MONGO_DATABASE=${MONGO_DATABASE}
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS}
+    networks:
+      - transport-network
+    restart: unless-stopped
 
-notification-service:
-  build:
-    context: ./services/notification-service
-    dockerfile: Dockerfile
-  container_name: notification-service
-  depends_on:
-    - mongodb
-    - kafka-init
-  ports:
-    - "8085:8085"
-  environment:
-    - MONGO_HOST=${MONGO_HOST}
-    - MONGO_PORT=${MONGO_PORT}
-    - MONGO_DATABASE=${MONGO_DATABASE}
-    - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS}
-    - SMTP_HOST=${SMTP_HOST}
-    - SMTP_PORT=${SMTP_PORT}
-    - SMTP_USER=${SMTP_USER}
-    - SMTP_PASSWORD=${SMTP_PASSWORD}
-  networks:
-    - transport-network
-  restart: unless-stopped
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+    container_name: notification-service
+    depends_on:
+      - mongodb
+      - kafka-init
+    ports:
+      - "8085:8085"
+    environment:
+      - MONGO_HOST=${MONGO_HOST}
+      - MONGO_PORT=${MONGO_PORT}
+      - MONGO_DATABASE=${MONGO_DATABASE}
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS}
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+    networks:
+      - transport-network
+    restart: unless-stopped
 
-admin-service:
-  build:
-    context: ./services/admin-service
-    dockerfile: Dockerfile
-  container_name: admin-service
-  depends_on:
-    - mongodb
-    - kafka-init
-  ports:
-    - "9090:9090" # Add this service
-  environment:
-    - MONGO_HOST=${MONGO_HOST}
-    - MONGO_PORT=${MONGO_PORT}
-    - MONGO_DATABASE=${MONGO_DATABASE}
-    - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS}
-    - JWT_SECRET=${JWT_SECRET}
-    - JWT_ISSUER=${JWT_ISSUER}
-  networks:
-    - transport-network
-  restart: unless-stopped
+  admin-service:
+    build:
+      context: ./services/admin-service
+      dockerfile: Dockerfile
+    container_name: admin-service
+    depends_on:
+      - mongodb
+      - kafka-init
+    ports:
+      - "9090:9090"
+    environment:
+      - MONGO_HOST=${MONGO_HOST}
+      - MONGO_PORT=${MONGO_PORT}
+      - MONGO_DATABASE=${MONGO_DATABASE}
+      - KAFKA_BOOTSTRAP_SERVERS=${KAFKA_BOOTSTRAP_SERVERS}
+      - JWT_SECRET=${JWT_SECRET}
+      - JWT_ISSUER=${JWT_ISSUER}
+    networks:
+      - transport-network
+    restart: unless-stopped
 
 networks:
   transport-network:
