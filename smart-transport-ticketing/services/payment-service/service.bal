@@ -5,10 +5,11 @@ import ballerina/time;
 import ballerina/random;
 import ballerinax/kafka;
 import ballerinax/mongodb;
+import ballerina/runtime;
 
 // Configuration for MongoDB connection
 configurable string mongodbUrl = "mongodb://localhost:27017";
-configurable string databaseName = "transport_ticketing";
+configurable string databaseName = "transport_db";
 
 // Configuration for Kafka
 configurable string kafkaBootstrapServers = "localhost:9092";

@@ -67,7 +67,7 @@ services:
     environment:
       MONGO_INITDB_DATABASE: ${MONGO_DATABASE}
     volumes:
-      - ./infrastructure/mongodb/init-mongo.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
+      - ./docker/mongo-init.js:/docker-entrypoint-initdb.d/init-mongo.js:ro
       - mongodb-data:/data/db
       - mongodb-config:/data/configdb
     networks:

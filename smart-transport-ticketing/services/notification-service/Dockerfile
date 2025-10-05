@@ -1,4 +1,4 @@
-# services/passenger-service/Dockerfile
+# services/notification-service/Dockerfile
 FROM ballerina/ballerina:2201.12.9
 
 WORKDIR /app
@@ -14,4 +14,4 @@ RUN bal build
 EXPOSE 8085
 
 # Run the service
-CMD ["bal", "run", "target/bin/passenger_service.jar"]
+CMD ["bal", "run", "target/bin/notification_service.jar"]
