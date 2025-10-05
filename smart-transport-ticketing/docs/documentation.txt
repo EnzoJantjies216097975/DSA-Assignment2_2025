@@ -1,0 +1,166 @@
+Project: Smart Public Transport Ticketing System
+
+This document describes the structure, architecture, dependencies, configuration, and how to run and test the Smart Public Transport Ticketing System contained in this repository.
+
+Contents
+- Project overview
+- Architecture and components
+- How the database (MongoDB) is set up
+- Kafka topics and event flows
+- Services and endpoints (what each service exposes)
+- Environment variables and configuration
+- How to run (Docker Compose - PowerShell commands)
+- Smoke tests (example requests)
+- Troubleshooting & common fixes
+
+1) Project overview
+-
+This project implements a distributed microservices system for public-transport ticketing. It uses Ballerina for services, MongoDB for persistence, Kafka for asynchronous messaging, and Docker Compose for local orchestration. The system supports passenger registration and authentication, ticket creation and lifecycle, payment processing, ticket validation, transport/trip management, notification events, and admin functions.
+
+2) Architecture and components
+
+- Zookeeper + Kafka: provide the event backbone. Topics are used to decouple services (ticket requests, payments, validations, user events).
+- MongoDB: stores persistent domain data (users, tickets, payments, routes, trips, notifications).
+- Microservices (Ballerina):
+	- passenger-service: user registration, login, JWT auth, account balance management, publishes user events.
+	- ticketing-service: creates tickets, stores tickets, publishes ticket requests to Kafka, validates tickets, consumes payment events.
+	- payment-service: processes payment requests (simulated), updates payments collection, publishes payment events.
+	- transport-service: manages routes and trips (included in repo).
+	- notification-service: sends notifications (email/SMS/push) when events occur (included in repo).
+	- admin-service: admin endpoints for route and reporting operations (included in repo).
+	- cli-client: a command-line client (included in repo) to interact with the system.
+- kafka-ui: Web UI to inspect Kafka topics/messages.
+
+3) How the database (MongoDB) is set up
+
+- Database name (default): transport_ticketing (set in `.env`)
+- Initialization scripts: On the first MongoDB startup, a script is mounted into `/docker-entrypoint-initdb.d/` to create collections and indexes and seed sample data.
+	- The compose file mounts `./infrastructure/mongodb/init-mongo.js` — ensure the correct file exists at that relative path.
+- Collections created by init scripts: `users`, `routes`, `trips`, `tickets`, `payments`, `notifications`, `service_disruptions`, etc.
+- Indexes: unique indexes (email, username, ticketId, paymentId, routeId) and compound indexes useful for queries (status + validUntil, routeId + days, etc.)
+
+4) Kafka topics and event flows
+
+- Topics created by `infrastructure/kafka/create-topics.sh` (adjustable):
+	- `ticket.requests` — produced by `ticketing-service` when a ticket is requested; consumed by `payment-service`.
+	- `payments.processed` — produced by `payment-service` after processing; consumed by `ticketing-service` to mark tickets PAID.
+	- `ticket.validations` — produced by `ticketing-service` after validation; consumed by `notification-service`.
+	- `passenger.registrations` (or `user.events`) — produced by `passenger-service` for registration/login events.
+
+Event flow (typical purchase):
+ 1. Client calls `ticketing-service` POST /tickets to create a ticket (status: CREATED). The service stores the ticket in MongoDB and publishes an event to `ticket.requests` with payment details.
+ 2. `payment-service` consumes `ticket.requests`, processes the payment (simulated), stores payment record in `payments` collection and produces a `payments.processed` event (PAYMENT_COMPLETED or PAYMENT_FAILED).
+ 3. `ticketing-service` consumes `payments.processed` and updates the ticket status to `PAID` when successful.
+ 4. When a passenger validates a ticket on a vehicle, `ticketing-service` updates the ticket and publishes a `ticket.validations` event; `notification-service` can send notifications.
+
+5) Services and endpoints
+
+The key services and representative endpoints (see `services/<service>/service.bal` for full details):
+
+- passenger-service (Ballerina) — listener port in code: 8081
+	- POST /register — register a new passenger (returns JWT)
+	- POST /login — login (returns JWT)
+	- GET /profile — get authenticated user profile
+	- GET /tickets — get active tickets for authenticated user
+	- POST /topup — top up account balance (if implemented)
+
+- ticketing-service — listener port in code: 8083
+	- POST /tickets — request/create a new ticket (stores ticket with status CREATED and publishes to `ticket.requests`)
+	- GET /tickets/{ticketId} — fetch ticket by id
+	- GET /users/{userId}/tickets — list a user’s tickets
+	- POST /tickets/validate — validate a ticket (updates status and publishes to `ticket.validations`)
+	- GET /pricing — get ticket pricing
+
+- payment-service — listener port in code: 8084
+	- POST /process — process a payment request (returns payment record and produces `payments.processed`)
+	- GET /payments/{paymentId} — get payment details
+	- POST /refunds — process refund
+
+Note: Some services may publish/subscribe to additional topics (e.g., `schedule.updates`) — check the `service.bal` files for each service to see subscribed topic names and listener ports.
+
+6) Environment variables and configuration
+
+- `.env` file contains the important values used by `docker-compose.yml` and services:
+	- MONGO_HOST (default: mongodb)
+	- MONGO_PORT (default: 27017)
+	- MONGO_DATABASE (default: transport_ticketing)
+	- KAFKA_BOOTSTRAP_SERVERS (default: kafka:9092)
+	- JWT_SECRET, JWT_ISSUER
+	- SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD (for email notifications)
+
+7) How to run (PowerShell)
+
+From inside `smart-transport-ticketing/`:
+Project: Smart Public Transport Ticketing System
+
+
+8) Smoke tests (examples)
+
+After the stack is running (and if ports are aligned), you can run quick checks (replace example IDs with real ones returned by the services):
+
+1) Register user
+curl -X POST http://localhost:8081/register -H "Content-Type: application/json" -d '{
+  "username": "Amenenge",
+  "email": "Amenenge@dsa.com",
+  "password": "",
+  "fullName":" Amenengedsa"
+}'
+ 
+2) Create ticket (ticketing)
+curl -X POST http://localhost:8083/tickets -H "Content-Type: application/json" -d '{
+  "userId": "<userId>",
+  "ticketType": "SINGLE",
+  "paymentMethod": "CARD"
+}'
+
+3) Process payment
+curl -X POST http://localhost:8084/process -H "Content-Type: application/json" -d '{
+  "userId": "<userId>",
+  "ticketId": "<ticketId>",
+  "amount": 15.00,
+  "paymentMethod": "CARD"
+}'
+
+9) Troubleshooting & common fixes
+- Port mismatches: Verify http:Listener(<port>) in each service.bal and the ports mapped in docker-compose.yml match. If a service listens on 8083 in code but compose maps 8080:8080, the service won't be reachable on the expected host port.
+- Missing Kafka topics: If a service subscribes to a topic that isn't created by create-topics.sh, either add the topic to the script or create it manually via Kafka CLI or Kafka UI.
+- Mongo init script path: docker-compose.yml expects infrastructure/mongodb/init-mongo.js. Ensure your init script is there. If you use a different script variant, update the path.
+- Check logs: docker-compose logs -f <service-name> to see runtime errors (e.g., unable to connect to Mongo or Kafka, missing config values).
+
+
+Roles & feature summary
+ Passenger Role
+- Complete registration and login system
+- Route browsing with transport-type filtering
+- Schedule checking with date selection
+- Ticket purchasing with multiple types: SINGLE, RETURN, DAY_PASS, WEEK_PASS, MONTH_PASS
+- Account balance management and top-up
+- Ticket viewing and management
+- Notification preferences
+- Service-disruption alerts
+- Payment and ticket history
+
+Administrator Role
+- Comprehensive dashboard with system statistics
+- Revenue reporting with date ranges
+- Usage analytics per route
+- System health monitoring
+- Route creation and management
+- Trip scheduling and management
+- Service disruption publishing
+- Ticket pricing management
+- User management with status updates
+- Bulk notification capabilities
+- Data export/import functionality
+
+Validator Role
+- Ticket validation with detailed responses
+- Validation history tracking
+- Trip occupancy checking
+- Issue reporting system
+- QR code scanning simulation
+- Real-time validation feedback
+
+
+
+
