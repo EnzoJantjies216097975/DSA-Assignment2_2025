@@ -195,7 +195,7 @@ services:
       - transport-network
     restart: unless-stopped
 
-   validation-service:
+  validation-service:
     build:
       context: ./services/validation-service
       dockerfile: Dockerfile

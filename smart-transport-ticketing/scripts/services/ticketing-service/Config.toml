@@ -1,0 +1,6 @@
+[ballerina]
+[ballerina.log]
+level = "INFO"
+
+[service]
+host = "0.0.0.0"

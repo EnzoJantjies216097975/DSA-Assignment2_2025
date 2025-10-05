@@ -11,7 +11,7 @@ COPY *.bal .
 RUN bal build
 
 # Expose the service port
-EXPOSE 8082
+EXPOSE 8087
 
 # Run the service
 CMD ["bal", "run", "target/bin/passenger_service.jar"]
