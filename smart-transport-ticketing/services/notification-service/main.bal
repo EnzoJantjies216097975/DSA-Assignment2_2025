@@ -4,7 +4,7 @@ import ballerina/email;
 import ballerina/time;
 import ballerina/uuid;
 import ballerina/os;
-import ballerina/runtime;
+import ballerina/lang.runtime;
 import ballerinax/kafka;
 import ballerinax/mongodb;
 
@@ -16,7 +16,7 @@ configurable string databaseName = os:getEnv("MONGO_DATABASE") ?: "transport_db"
 string mongodbUrl = string `mongodb://${mongoHost}:${mongoPort}`;
 
 // Configuration for Kafka
-configurable string kafkaBootstrapServers = os:getEnv("KAFKA_BOOTSTRAP_SERVERS") ?: "localhost:9092";
+configurable string kafkaBootstrapServers = os:getEnv("KAFKA_BOOTSTRAP_SERVERS") != "" ? os:getEnv("KAFKA_BOOTSTRAP_SERVERS") : "localhost:9092";
 
 // Email configuration
 configurable string smtpHost = "smtp.gmail.com";
@@ -31,7 +31,7 @@ configurable string smsApiKey = "your-sms-api-key";
 mongodb:Client mongoClient = check new (mongodbUrl);
 
 // Kafka consumer for notification events
-kafka:Consumer kafkaConsumer = check new ({
+kafka:ConsumerConfiguration kafkaConsumerConfig = {
     bootstrapServers: kafkaBootstrapServers,
     groupId: "notification-service-group",
     topics: [
@@ -42,7 +42,9 @@ kafka:Consumer kafkaConsumer = check new ({
         "notification.triggers"
     ],
     autoOffsetReset: "earliest"
-});
+};
+
+ballerinax/kafka:Consumer kafkaConsumer = check new (kafkaConsumerConfig);
 
 // Email client for sending emails
 email:SmtpClient smtpClient = check new (smtpHost, smtpUser, smtpPassword, smtpPort);
@@ -128,25 +130,16 @@ map<NotificationTemplate> templates = {
 };
 
 // Service definition
-@http:ServiceConfig {
-    cors: {
-        allowOrigins: ["*"],
-        allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-        allowHeaders: ["*"],
-        exposeHeaders: ["*"],
-        allowCredentials: false,
-        maxAge: 86400
-    }
-}
+// Removed undefined @http:ServiceConfig annotation.
+// CORS configuration should be set in the Listener or resource options if needed.
 
 service / on new http:Listener(8085) {
 
-    // Initialize Kafka consumer listener on startup
-    function init() returns error? {
+    remote function init() returns error? {
         _ = start consumeKafkaEvents();
         log:printInfo("Notification service started and listening to Kafka events");
     }
-    
+
     // Send notification manually
     resource function post send(@http:Payload map<json> request) 
             returns map<json>|http:BadRequest|http:InternalServerError {
