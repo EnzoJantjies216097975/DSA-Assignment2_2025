@@ -133,9 +133,7 @@ map<NotificationTemplate> templates = {
     }
 }
 
-# A service representing a network-accessible API
-# bound to port `9090`.
-service / on new http:Listener(9090) {
+service / on new http:Listener(8085) {
 
     // Initialize Kafka consumer listener on startup
     function init() returns error? {
