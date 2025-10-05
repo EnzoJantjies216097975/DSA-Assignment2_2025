@@ -1,56 +1,39 @@
 [[dependency]]
-name = "mongodb"
 org = "ballerinax"
+name = "mongodb"
 version = "5.0.0"
 
 [[dependency]]
-name = "kafka"
 org = "ballerinax"
+name = "kafka"
 version = "4.0.0"
 
 [[dependency]]
-name = "http"
 org = "ballerina"
+name = "http"
 version = "2.11.0"
 
 [[dependency]]
-name = "log"
 org = "ballerina"
+name = "log"
 version = "2.10.0"
 
 [[dependency]]
-name = "time"
 org = "ballerina"
+name = "time"
 version = "2.5.0"
 
 [[dependency]]
-name = "uuid"
 org = "ballerina"
+name = "uuid"
 version = "1.8.0"
 
 [[dependency]]
-name = "crypto"
 org = "ballerina"
+name = "crypto"
 version = "2.7.0"
 
 [[dependency]]
+org = "ballerina"
 name = "jwt"
-org = "ballerina"
 version = "2.13.0"
-
-# Additional dependency for notification-service only
-[[dependency]]
-name = "email"
-org = "ballerina"
-version = "2.10.0"
-
-# Additional dependencies for cli-client only
-[[dependency]]
-name = "regex"
-org = "ballerina"
-version = "1.5.0"
-
-[[dependency]]
-name = "runtime"
-org = "ballerina"
-version = "0.0.1"
