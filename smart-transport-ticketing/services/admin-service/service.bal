@@ -2,15 +2,20 @@ import ballerina/http;
 import ballerina/log;
 import ballerina/jwt;
 import ballerina/time;
+import ballerina/uuid;
+import ballerina/os;
 import ballerinax/kafka;
 import ballerinax/mongodb;
 
 // Configuration for MongoDB connection
-configurable string mongodbUrl = "mongodb://localhost:27017";
-configurable string databaseName = "transport_db";
+configurable string mongoHost = os:getEnv("MONGO_HOST") ?: "localhost";
+configurable int mongoPort = check int:fromString(os:getEnv("MONGO_PORT") ?: "27017");
+configurable string databaseName = os:getEnv("MONGO_DATABASE") ?: "transport_db";
+
+string mongodbUrl = string `mongodb://${mongoHost}:${mongoPort}`;
 
 // Configuration for Kafka
-configurable string kafkaBootstrapServers = "localhost:9092";
+configurable string kafkaBootstrapServers = os:getEnv("KAFKA_BOOTSTRAP_SERVERS") ?: "localhost:9092";
 
 // JWT configuration
 configurable string jwtSecret = "your-secret-key-change-in-production";

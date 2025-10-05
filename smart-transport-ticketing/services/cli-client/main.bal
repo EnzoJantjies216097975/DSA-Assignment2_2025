@@ -2147,3 +2147,61 @@ function repeat(string str, int count) returns string {
     }
     return result;
 }
+
+// Utility function for string padding
+isolated function padEnd(string str, int length) returns string {
+    int currentLength = str.length();
+    if currentLength >= length {
+        return str;
+    }
+    int padding = length - currentLength;
+    string paddedStr = str;
+    foreach int i in 0 ..< padding {
+        paddedStr = paddedStr + " ";
+    }
+    return paddedStr;
+}
+
+// String repeat utility
+isolated function repeat(string str, int count) returns string {
+    string result = "";
+    foreach int i in 0 ..< count {
+        result = result + str;
+    }
+    return result;
+}
+
+// Safe string conversion for ensureType
+function ensureString(json value) returns string|error {
+    if value is string {
+        return value;
+    }
+    return error("Value is not a string");
+}
+
+// Safe int conversion
+function ensureInt(json value) returns int|error {
+    if value is int {
+        return value;
+    }
+    return error("Value is not an int");
+}
+
+// Safe decimal conversion
+function ensureDecimal(json value) returns decimal|error {
+    if value is decimal {
+        return value;
+    }
+    if value is int {
+        return <decimal>value;
+    }
+    return error("Value is not a decimal");
+}
+
+// Safe boolean conversion
+function ensureBoolean(json value) returns boolean|error {
+    if value is boolean {
+        return value;
+    }
+    return error("Value is not a boolean");
+}
