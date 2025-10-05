@@ -43,5 +43,5 @@ public enum NotificationChannel {
 public type DeliveryStatus record {|
     string? email;
     string? sms;
-    string? push;
+    string? push;
 |};
