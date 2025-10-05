@@ -65,7 +65,7 @@ type TripInfo record {
 UserSession? currentSession = ();
 
 // Main Entry Point
-public function main() returs error? {
+public function main() returns error? {
     clearScreen()
     printWelcomeBanner();
 
