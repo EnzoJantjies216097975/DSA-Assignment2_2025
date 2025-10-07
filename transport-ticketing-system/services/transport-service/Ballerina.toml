@@ -1,0 +1,8 @@
+[package]
+org = "enzoj"                     # Your organization name or namespace
+name = "transport_service"            # The module/service name
+version = "0.1.0"                 # Semantic version of your package
+distribution = "2201.12.9"        # Ensures it builds with Ballerina 2201.12.9 (Swan Lake Update 12)
+
+[build-options]
+observabilityIncluded = true      # Enables metrics/logging/tracing features

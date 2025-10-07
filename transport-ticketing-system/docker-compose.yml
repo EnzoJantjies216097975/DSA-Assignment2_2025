@@ -1,0 +1,169 @@
+services:
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+    networks:
+      - transport-network
+
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      - transport-network
+
+  mongodb:
+    image: mongo:7.0
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: admin
+      MONGO_INITDB_ROOT_PASSWORD: password123
+      MONGO_INITDB_DATABASE: transport_db
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - transport-network
+
+  passenger-service:
+    build:
+      context: ./services/passenger-service
+      dockerfile: Dockerfile
+    container_name: passenger-service
+    ports:
+      - "9090:9090"
+    environment:
+      - mongoHost=mongodb
+      - mongoPort=27017
+      - mongoUsername=admin
+      - mongoPassword=password123
+      - mongoDatabase=transport_db
+    depends_on:
+      - mongodb
+    networks:
+      - transport-network
+    restart: on-failure
+
+  transport-service:
+    build:
+      context: ./services/transport-service
+      dockerfile: Dockerfile
+    container_name: transport-service
+    ports:
+      - "9091:9091"
+    environment:
+      - mongoHost=mongodb
+      - mongoPort=27017
+      - mongoUsername=admin
+      - mongoPassword=password123
+      - mongoDatabase=transport_db
+      - kafkaBootstrapServers=kafka:9092
+    depends_on:
+      - mongodb
+      - kafka
+    networks:
+      - transport-network
+    restart: on-failure
+
+  ticketing-service:
+    build:
+      context: ./services/ticketing-service
+      dockerfile: Dockerfile
+    container_name: ticketing-service
+    ports:
+      - "9096:9092"
+    environment:
+      - mongoHost=mongodb
+      - mongoPort=27017
+      - mongoUsername=admin
+      - mongoPassword=password123
+      - mongoDatabase=transport_db
+      - kafkaBootstrapServers=kafka:9092
+    depends_on:
+      - mongodb
+      - kafka
+    networks:
+      - transport-network
+    restart: on-failure
+
+  payment-service:
+    build:
+      context: ./services/payment-service
+      dockerfile: Dockerfile
+    container_name: payment-service
+    ports:
+      - "9093:9093"
+    environment:
+      - mongoHost=mongodb
+      - mongoPort=27017
+      - mongoUsername=admin
+      - mongoPassword=password123
+      - mongoDatabase=transport_db
+      - kafkaBootstrapServers=kafka:9092
+    depends_on:
+      - mongodb
+      - kafka
+    networks:
+      - transport-network
+    restart: on-failure
+
+  notification-service:
+    build:
+      context: ./services/notification-service
+      dockerfile: Dockerfile
+    container_name: notification-service
+    ports:
+      - "9094:9094"
+    environment:
+      - kafkaBootstrapServers=kafka:9092
+    depends_on:
+      - kafka
+    networks:
+      - transport-network
+    restart: on-failure
+
+  admin-service:
+    build:
+      context: ./services/admin-service
+      dockerfile: Dockerfile
+    container_name: admin-service
+    ports:
+      - "9095:9095"
+    environment:
+      - mongoHost=mongodb
+      - mongoPort=27017
+      - mongoUsername=admin
+      - mongoPassword=password123
+      - mongoDatabase=transport_db
+      - transportServiceUrl=http://transport-service:9091
+    depends_on:
+      - mongodb
+      - transport-service
+    networks:
+      - transport-network
+    restart: on-failure
+
+networks:
+  transport-network:
+    driver: bridge
+
+volumes:
+  mongodb_data:
