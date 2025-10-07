@@ -1,0 +1,7 @@
+# Transport Service Configuration
+mongoHost = "mongodb"
+mongoPort = 27017
+mongoUsername = "admin"
+mongoPassword = "password123"
+mongoDatabase = "transport_db"
+kafkaBootstrapServers = "kafka:9092"

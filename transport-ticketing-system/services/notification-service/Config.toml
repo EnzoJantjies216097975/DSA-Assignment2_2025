@@ -1,0 +1,15 @@
+# Notification Service Configuration
+mongoHost = "mongodb"
+mongoPort = 27017
+mongoUsername = "admin"
+mongoPassword = "password123"
+mongoDatabase = "transport_db"
+kafkaBootstrapServers = "kafka:9092"
+emailEnabled = false
+smtpHost = "smtp.example.com"
+smtpPort = 587
+smtpUsername = "noreply@transport.com"
+smtpPassword = "password"
+smsEnabled = false
+smsApiUrl = "https://api.sms-provider.com"
+smsApiKey = "your-api-key"

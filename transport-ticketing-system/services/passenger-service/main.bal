@@ -6,7 +6,7 @@ import ballerinax/mongodb;
 import ballerina/crypto;
 
 // MongoDB configuration
-configurable string mongoHost = "localhost";
+configurable string mongoHost = "mongodb";
 configurable int mongoPort = 27017;
 configurable string mongoUsername = "admin";
 configurable string mongoPassword = "password123";

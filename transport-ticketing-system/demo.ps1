@@ -99,7 +99,7 @@ try {
         paymentMethod = "CREDIT_CARD"
     } | ConvertTo-Json
     
-    $ticket = Invoke-RestMethod -Uri "http://localhost:9092/ticketing/tickets/purchase" `
+    $ticket = Invoke-RestMethod -Uri "http://localhost:9096/ticketing/tickets/purchase" `
         -Method Post `
         -ContentType "application/json" `
         -Body $ticketBody
@@ -121,7 +121,7 @@ Start-Sleep -Seconds 5
 Write-Host ""
 Write-Host "Step 7: Checking ticket status..." -ForegroundColor Yellow
 try {
-    $ticketStatus = Invoke-RestMethod -Uri "http://localhost:9092/ticketing/tickets/$ticketId" -Method Get
+    $ticketStatus = Invoke-RestMethod -Uri "http://localhost:9096/ticketing/tickets/$ticketId" -Method Get
     Write-Host "[SUCCESS] Ticket status updated: $($ticketStatus.status)" -ForegroundColor $(if($ticketStatus.status -eq "PAID"){"Green"}else{"Red"})
     
     if ($ticketStatus.status -eq "PAID") {
@@ -144,7 +144,7 @@ try {
         tripId = $tripId
     } | ConvertTo-Json
     
-    $validation = Invoke-RestMethod -Uri "http://localhost:9092/ticketing/tickets/validate" `
+    $validation = Invoke-RestMethod -Uri "http://localhost:9096/ticketing/tickets/validate" `
         -Method Post `
         -ContentType "application/json" `
         -Body $validationBody
@@ -159,7 +159,7 @@ try {
 # 9. View User's Tickets
 Write-Host "Step 9: Fetching user's tickets..." -ForegroundColor Yellow
 try {
-    $userTickets = Invoke-RestMethod -Uri "http://localhost:9092/ticketing/users/$userId/tickets" -Method Get
+    $userTickets = Invoke-RestMethod -Uri "http://localhost:9096/ticketing/users/$userId/tickets" -Method Get
     Write-Host "[SUCCESS] User has $($userTickets.Count) ticket(s)" -ForegroundColor Green
     foreach ($t in $userTickets) {
         Write-Host "          - $($t.ticketType) | Status: $($t.status) | Price: N`$$($t.price)" -ForegroundColor Gray

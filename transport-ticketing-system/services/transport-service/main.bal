@@ -6,12 +6,12 @@ import ballerinax/mongodb;
 import ballerinax/kafka;
 
 // Configuration
-configurable string mongoHost = "localhost";
+configurable string mongoHost = "mongodb";
 configurable int mongoPort = 27017;
 configurable string mongoUsername = "admin";
 configurable string mongoPassword = "password123";
 configurable string mongoDatabase = "transport_db";
-configurable string kafkaBootstrapServers = "localhost:9092";
+configurable string kafkaBootstrapServers = "kafka:9092";
 
 // MongoDB client
 final mongodb:Client mongoClient = check new ({

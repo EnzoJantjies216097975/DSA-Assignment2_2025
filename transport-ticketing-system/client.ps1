@@ -1,5 +1,5 @@
 # Interactive Transport Ticketing System Client
-# Save as: interactive-client.ps1
+# Save as: client.ps1
 
 # Global variables to store session data
 $Global:CurrentUser = $null
@@ -28,6 +28,11 @@ function Write-Info {
     Write-Host "[INFO] $Text" -ForegroundColor Yellow
 }
 
+function Write-Warning {
+    param([string]$Text)
+    Write-Host "[WARNING] $Text" -ForegroundColor Magenta
+}
+
 # Check if services are running
 function Test-ServicesRunning {
     try {
@@ -39,9 +44,114 @@ function Test-ServicesRunning {
     }
 }
 
-# Passenger Functions
-function Register-User {
-    Write-Title "USER REGISTRATION"
+# ============================================
+# AUTHENTICATION FUNCTIONS
+# ============================================
+
+function Login-Admin {
+    Write-Title "ADMIN LOGIN"
+    
+    $email = Read-Host "Enter admin email"
+    $password = Read-Host "Enter admin password" -AsSecureString
+    $passwordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))
+    
+    try {
+        $body = @{
+            email = $email
+            password = $passwordPlain
+        } | ConvertTo-Json
+        
+        $response = Invoke-RestMethod -Uri "http://localhost:9090/passenger/login" `
+            -Method Post `
+            -ContentType "application/json" `
+            -Body $body
+        
+        # Fetch full user profile to get role
+        $profile = Invoke-RestMethod -Uri "http://localhost:9090/passenger/profile/$($response.userId)" -Method Get
+        
+        # Check if user is actually an admin
+        if ($profile.role -ne "ADMIN") {
+            Write-Error "Access Denied: This account does not have administrator privileges"
+            Write-Warning "Please login as Passenger instead"
+            Read-Host "`nPress Enter to continue"
+            return $false
+        }
+        
+        $Global:CurrentUser = @{
+            UserId = $response.userId
+            Email = $response.email
+            FirstName = $response.firstName
+            LastName = $response.lastName
+            Role = $profile.role
+        }
+        
+        $Global:IsAdmin = $true
+        
+        Write-Success "Admin login successful!"
+        Write-Host "Welcome, Administrator $($response.firstName) $($response.lastName)!" -ForegroundColor Magenta
+        Start-Sleep -Seconds 2
+        return $true
+        
+    } catch {
+        Write-Error "Login failed: $($_.Exception.Message)"
+        Read-Host "`nPress Enter to continue"
+        return $false
+    }
+}
+
+function Login-Passenger {
+    Write-Title "PASSENGER LOGIN"
+    
+    $email = Read-Host "Enter email"
+    $password = Read-Host "Enter password" -AsSecureString
+    $passwordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))
+    
+    try {
+        $body = @{
+            email = $email
+            password = $passwordPlain
+        } | ConvertTo-Json
+        
+        $response = Invoke-RestMethod -Uri "http://localhost:9090/passenger/login" `
+            -Method Post `
+            -ContentType "application/json" `
+            -Body $body
+        
+        # Fetch full user profile to get role
+        $profile = Invoke-RestMethod -Uri "http://localhost:9090/passenger/profile/$($response.userId)" -Method Get
+        
+        # Check if user is an admin trying to login as passenger
+        if ($profile.role -eq "ADMIN") {
+            Write-Warning "This is an administrator account"
+            Write-Info "Please login through Admin portal instead"
+            Read-Host "`nPress Enter to continue"
+            return $false
+        }
+        
+        $Global:CurrentUser = @{
+            UserId = $response.userId
+            Email = $response.email
+            FirstName = $response.firstName
+            LastName = $response.lastName
+            Role = $profile.role
+        }
+        
+        $Global:IsAdmin = $false
+        
+        Write-Success "Login successful!"
+        Write-Host "Welcome, $($response.firstName) $($response.lastName)!" -ForegroundColor Cyan
+        Start-Sleep -Seconds 2
+        return $true
+        
+    } catch {
+        Write-Error "Login failed: $($_.Exception.Message)"
+        Read-Host "`nPress Enter to continue"
+        return $false
+    }
+}
+
+function Register-Passenger {
+    Write-Title "PASSENGER REGISTRATION"
     
     $email = Read-Host "Enter email"
     $password = Read-Host "Enter password" -AsSecureString
@@ -67,6 +177,8 @@ function Register-User {
         Write-Success "Registration successful!"
         Write-Host "User ID: $($response.userId)" -ForegroundColor Gray
         Write-Host "Email: $($response.email)" -ForegroundColor Gray
+        Write-Host ""
+        Write-Info "You can now login with your credentials"
         
     } catch {
         Write-Error "Registration failed: $($_.Exception.Message)"
@@ -75,39 +187,395 @@ function Register-User {
     Read-Host "`nPress Enter to continue"
 }
 
-function Login-User {
-    Write-Title "USER LOGIN"
+# ============================================
+# ADMIN FUNCTIONS
+# ============================================
+
+function Show-AdminDashboard {
+    Clear-Host
+    Write-Title "ADMINISTRATOR DASHBOARD"
+    
+    Write-Host "Logged in as: $($Global:CurrentUser.FirstName) $($Global:CurrentUser.LastName)" -ForegroundColor Magenta
+    Write-Host "Email: $($Global:CurrentUser.Email)" -ForegroundColor Gray
+    Write-Host "Role: ADMINISTRATOR" -ForegroundColor Magenta
+    
+    # Fetch dashboard stats
+    try {
+        $dashboard = Invoke-RestMethod -Uri "http://localhost:9095/admin/dashboard" -Method Get -ErrorAction SilentlyContinue
+        
+        Write-Host ""
+        Write-Host "=== SYSTEM OVERVIEW ===" -ForegroundColor Cyan
+        Write-Host "Total Routes:  $($dashboard.totalRoutes)" -ForegroundColor White
+        Write-Host "Total Trips:   $($dashboard.totalTrips)" -ForegroundColor White
+        Write-Host "Total Tickets: $($dashboard.totalTickets)" -ForegroundColor White
+        Write-Host "Total Revenue: N`$$($dashboard.totalRevenue)" -ForegroundColor Green
+    } catch {
+        Write-Host ""
+        Write-Host "=== SYSTEM OVERVIEW ===" -ForegroundColor Cyan
+        Write-Host "Dashboard statistics unavailable" -ForegroundColor Gray
+    }
+    
+    Write-Host ""
+    Write-Host "=== USER MANAGEMENT ===" -ForegroundColor Cyan
+    Write-Host "1. Register New User (Passenger/Admin)" -ForegroundColor White
+    Write-Host "2. List All Users" -ForegroundColor White
+    Write-Host "3. Promote User to Admin" -ForegroundColor White
+    
+    Write-Host ""
+    Write-Host "=== ROUTE MANAGEMENT ===" -ForegroundColor Cyan
+    Write-Host "4. View All Routes" -ForegroundColor White
+    Write-Host "5. Create New Route" -ForegroundColor White
+    
+    Write-Host ""
+    Write-Host "=== TRIP MANAGEMENT ===" -ForegroundColor Cyan
+    Write-Host "6. View All Trips" -ForegroundColor White
+    Write-Host "7. Schedule New Trip" -ForegroundColor White
+    Write-Host "8. Update Trip Status" -ForegroundColor White
+    
+    Write-Host ""
+    Write-Host "=== REPORTS ===" -ForegroundColor Cyan
+    Write-Host "9. Sales Report" -ForegroundColor White
+    Write-Host "10. Traffic Report" -ForegroundColor White
+    
+    Write-Host ""
+    Write-Host "0. Logout" -ForegroundColor Red
+    Write-Host ""
+    
+    $choice = Read-Host "Enter your choice"
+    
+    switch ($choice) {
+        "1" { Register-UserByAdmin }
+        "2" { List-AllUsers }
+        "3" { Promote-UserToAdmin }
+        "4" { Show-Routes }
+        "5" { Create-Route }
+        "6" { Show-Trips }
+        "7" { Create-Trip }
+        "8" { Update-TripStatus }
+        "9" { Show-SalesReport }
+        "10" { Show-TrafficReport }
+        "0" { 
+            $Global:CurrentUser = $null
+            $Global:IsAdmin = $false
+            Write-Success "Logged out successfully"
+            Start-Sleep -Seconds 1
+            return $false
+        }
+        default { 
+            Write-Error "Invalid choice"
+            Start-Sleep -Seconds 1
+        }
+    }
+    
+    return $true
+}
+
+function Register-UserByAdmin {
+    Write-Title "REGISTER NEW USER (ADMIN)"
     
     $email = Read-Host "Enter email"
     $password = Read-Host "Enter password" -AsSecureString
     $passwordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))
+    $firstName = Read-Host "Enter first name"
+    $lastName = Read-Host "Enter last name"
+    $phone = Read-Host "Enter phone number"
+    
+    Write-Host ""
+    Write-Host "Select Role:" -ForegroundColor Yellow
+    Write-Host "1. PASSENGER (default)"
+    Write-Host "2. ADMIN"
+    $roleChoice = Read-Host "Enter choice (1-2)"
+    $role = if ($roleChoice -eq "2") { "ADMIN" } else { "PASSENGER" }
     
     try {
         $body = @{
             email = $email
             password = $passwordPlain
+            firstName = $firstName
+            lastName = $lastName
+            phone = $phone
         } | ConvertTo-Json
         
-        $response = Invoke-RestMethod -Uri "http://localhost:9090/passenger/login" `
+        $response = Invoke-RestMethod -Uri "http://localhost:9090/passenger/register" `
             -Method Post `
             -ContentType "application/json" `
             -Body $body
         
-        $Global:CurrentUser = @{
-            UserId = $response.userId
-            Email = $response.email
-            FirstName = $response.firstName
-            LastName = $response.lastName
+        # If admin role selected, update it
+        if ($role -eq "ADMIN") {
+            $mongoCommand = "use transport_db; db.users.updateOne({email: `"$email`"}, {`$set: {role: `"ADMIN`"}})"
+            docker exec -i mongodb mongosh -u admin -p password123 --quiet --eval $mongoCommand | Out-Null
         }
         
-        Write-Success "Login successful!"
-        Write-Host "Welcome, $($response.firstName) $($response.lastName)!" -ForegroundColor Cyan
+        Write-Success "User registered successfully!"
+        Write-Host "User ID: $($response.userId)" -ForegroundColor Gray
+        Write-Host "Email: $($response.email)" -ForegroundColor Gray
+        Write-Host "Role: $role" -ForegroundColor $(if($role -eq "ADMIN"){"Magenta"}else{"Green"})
         
     } catch {
-        Write-Error "Login failed: $($_.Exception.Message)"
+        Write-Error "Registration failed: $($_.Exception.Message)"
     }
     
     Read-Host "`nPress Enter to continue"
+}
+
+function List-AllUsers {
+    Write-Title "ALL REGISTERED USERS"
+    
+    try {
+        $mongoCommand = 'use transport_db; db.users.find({}, {email: 1, firstName: 1, lastName: 1, role: 1, phone: 1, _id: 0}).sort({createdAt: -1})'
+        $result = docker exec -i mongodb mongosh -u admin -p password123 --quiet --eval $mongoCommand 2>&1
+        
+        Write-Host $result
+        
+    } catch {
+        Write-Error "Failed to fetch users: $($_.Exception.Message)"
+    }
+    
+    Read-Host "`nPress Enter to continue"
+}
+
+function Promote-UserToAdmin {
+    Write-Title "PROMOTE USER TO ADMIN"
+    
+    $email = Read-Host "Enter user email to promote"
+    
+    try {
+        $mongoCommand = "use transport_db; var result = db.users.updateOne({email: `"$email`"}, {`$set: {role: `"ADMIN`"}}); if (result.matchedCount === 0) { print('ERROR: User not found'); } else { print('SUCCESS: User promoted to ADMIN'); }"
+        $result = docker exec -i mongodb mongosh -u admin -p password123 --quiet --eval $mongoCommand 2>&1
+        
+        if ($result -match "SUCCESS") {
+            Write-Success "User promoted to ADMIN successfully!"
+        } else {
+            Write-Error "User not found with email: $email"
+        }
+        
+    } catch {
+        Write-Error "Failed to promote user: $($_.Exception.Message)"
+    }
+    
+    Read-Host "`nPress Enter to continue"
+}
+
+function Create-Route {
+    Write-Title "CREATE NEW ROUTE"
+    
+    $routeNumber = Read-Host "Enter route number (e.g., R101)"
+    $routeName = Read-Host "Enter route name"
+    $startPoint = Read-Host "Enter start point"
+    $endPoint = Read-Host "Enter end point"
+    $stopsInput = Read-Host "Enter stops (comma-separated)"
+    $stops = $stopsInput -split ',' | ForEach-Object { $_.Trim() }
+    
+    Write-Host "`nTransport Type:" -ForegroundColor Yellow
+    Write-Host "1. BUS"
+    Write-Host "2. TRAIN"
+    $typeChoice = Read-Host "Select type (1-2)"
+    $transportType = if ($typeChoice -eq "1") { "BUS" } else { "TRAIN" }
+    
+    try {
+        $body = @{
+            routeNumber = $routeNumber
+            routeName = $routeName
+            startPoint = $startPoint
+            endPoint = $endPoint
+            stops = $stops
+            transportType = $transportType
+        } | ConvertTo-Json
+        
+        $response = Invoke-RestMethod -Uri "http://localhost:9091/transport/routes" `
+            -Method Post `
+            -ContentType "application/json" `
+            -Body $body
+        
+        Write-Success "Route created successfully!"
+        Write-Host "Route ID: $($response.routeId)" -ForegroundColor Cyan
+        
+    } catch {
+        Write-Error "Failed to create route: $($_.Exception.Message)"
+    }
+    
+    Read-Host "`nPress Enter to continue"
+}
+
+function Create-Trip {
+    Write-Title "SCHEDULE NEW TRIP"
+    
+    $routeId = Read-Host "Enter Route ID"
+    $date = Read-Host "Enter date (YYYY-MM-DD)"
+    $departureTime = Read-Host "Enter departure time (HH:MM)"
+    $arrivalTime = Read-Host "Enter arrival time (HH:MM)"
+    $totalSeats = Read-Host "Enter total seats"
+    
+    try {
+        $body = @{
+            routeId = $routeId
+            date = $date
+            departureTime = $departureTime
+            arrivalTime = $arrivalTime
+            totalSeats = [int]$totalSeats
+        } | ConvertTo-Json
+        
+        $response = Invoke-RestMethod -Uri "http://localhost:9091/transport/trips" `
+            -Method Post `
+            -ContentType "application/json" `
+            -Body $body
+        
+        Write-Success "Trip scheduled successfully!"
+        Write-Host "Trip ID: $($response.tripId)" -ForegroundColor Cyan
+        
+    } catch {
+        Write-Error "Failed to create trip: $($_.Exception.Message)"
+    }
+    
+    Read-Host "`nPress Enter to continue"
+}
+
+function Update-TripStatus {
+    Write-Title "UPDATE TRIP STATUS"
+    
+    $tripId = Read-Host "Enter Trip ID"
+    
+    Write-Host "`nStatus Options:" -ForegroundColor Yellow
+    Write-Host "1. DELAYED"
+    Write-Host "2. CANCELLED"
+    Write-Host "3. IN_PROGRESS"
+    Write-Host "4. COMPLETED"
+    
+    $choice = Read-Host "Select status (1-4)"
+    $statuses = @("DELAYED", "CANCELLED", "IN_PROGRESS", "COMPLETED")
+    $status = $statuses[[int]$choice - 1]
+    
+    $reason = Read-Host "Enter reason"
+    
+    try {
+        $body = @{
+            status = $status
+            reason = $reason
+        } | ConvertTo-Json
+        
+        $response = Invoke-RestMethod -Uri "http://localhost:9091/transport/trips/$tripId/status" `
+            -Method Patch `
+            -ContentType "application/json" `
+            -Body $body
+        
+        Write-Success "Trip status updated!"
+        Write-Info "Notifications sent to affected passengers"
+        
+    } catch {
+        Write-Error "Failed to update trip: $($_.Exception.Message)"
+    }
+    
+    Read-Host "`nPress Enter to continue"
+}
+
+function Show-SalesReport {
+    Write-Title "SALES REPORT"
+    
+    try {
+        $report = Invoke-RestMethod -Uri "http://localhost:9095/admin/reports/sales" -Method Get
+        
+        Write-Host "`nSales Summary:" -ForegroundColor Cyan
+        Write-Host "Total Tickets Sold: $($report.totalTicketsSold)" -ForegroundColor White
+        Write-Host "Total Revenue: N`$$($report.totalRevenue)" -ForegroundColor Green
+        
+        Write-Host "`nBreakdown by Ticket Type:" -ForegroundColor Cyan
+        foreach ($type in $report.ticketsByType.PSObject.Properties) {
+            $revenue = $report.revenueByType.($type.Name)
+            Write-Host "  $($type.Name): $($type.Value) tickets (N`$$revenue)" -ForegroundColor White
+        }
+        
+    } catch {
+        Write-Error "Failed to generate report: $($_.Exception.Message)"
+    }
+    
+    Read-Host "`nPress Enter to continue"
+}
+
+function Show-TrafficReport {
+    Write-Title "TRAFFIC REPORT"
+    
+    try {
+        $report = Invoke-RestMethod -Uri "http://localhost:9095/admin/reports/traffic" -Method Get
+        
+        Write-Host "`nTraffic Summary:" -ForegroundColor Cyan
+        Write-Host "Total Passengers: $($report.totalPassengers)" -ForegroundColor White
+        
+        Write-Host "`nPassengers by Route:" -ForegroundColor Cyan
+        foreach ($route in $report.passengersByRoute.PSObject.Properties) {
+            Write-Host "  Route $($route.Name): $($route.Value) passengers" -ForegroundColor White
+        }
+        
+    } catch {
+        Write-Error "Failed to generate report: $($_.Exception.Message)"
+    }
+    
+    Read-Host "`nPress Enter to continue"
+}
+
+# ============================================
+# PASSENGER FUNCTIONS
+# ============================================
+
+function Show-PassengerDashboard {
+    Clear-Host
+    Write-Title "PASSENGER DASHBOARD"
+    
+    Write-Host "Logged in as: $($Global:CurrentUser.FirstName) $($Global:CurrentUser.LastName)" -ForegroundColor Green
+    Write-Host "Email: $($Global:CurrentUser.Email)" -ForegroundColor Gray
+    
+    # Show quick stats
+    try {
+        $tickets = Invoke-RestMethod -Uri "http://localhost:9096/ticketing/users/$($Global:CurrentUser.UserId)/tickets" -Method Get -ErrorAction SilentlyContinue
+        $activeTickets = ($tickets | Where-Object { $_.status -eq "PAID" }).Count
+        
+        Write-Host ""
+        Write-Host "=== MY ACCOUNT ===" -ForegroundColor Cyan
+        Write-Host "Total Tickets: $($tickets.Count)" -ForegroundColor White
+        Write-Host "Active Tickets: $activeTickets" -ForegroundColor Green
+    } catch {
+        Write-Host ""
+        Write-Host "=== MY ACCOUNT ===" -ForegroundColor Cyan
+        Write-Host "Loading tickets..." -ForegroundColor Gray
+    }
+    
+    Write-Host ""
+    Write-Host "=== BROWSE ===" -ForegroundColor Cyan
+    Write-Host "1. View All Routes" -ForegroundColor White
+    Write-Host "2. View Available Trips" -ForegroundColor White
+    
+    Write-Host ""
+    Write-Host "=== MY TICKETS ===" -ForegroundColor Cyan
+    Write-Host "3. Purchase Ticket" -ForegroundColor White
+    Write-Host "4. View My Tickets" -ForegroundColor White
+    Write-Host "5. Validate Ticket" -ForegroundColor White
+    
+    Write-Host ""
+    Write-Host "0. Logout" -ForegroundColor Red
+    Write-Host ""
+    
+    $choice = Read-Host "Enter your choice"
+    
+    switch ($choice) {
+        "1" { Show-Routes }
+        "2" { Show-Trips }
+        "3" { Purchase-Ticket }
+        "4" { Show-MyTickets }
+        "5" { Validate-Ticket }
+        "0" { 
+            $Global:CurrentUser = $null
+            $Global:IsAdmin = $false
+            Write-Success "Logged out successfully"
+            Start-Sleep -Seconds 1
+            return $false
+        }
+        default { 
+            Write-Error "Invalid choice"
+            Start-Sleep -Seconds 1
+        }
+    }
+    
+    return $true
 }
 
 function Show-Routes {
@@ -121,6 +589,7 @@ function Show-Routes {
         } else {
             foreach ($route in $routes) {
                 Write-Host "`nRoute: $($route.routeNumber) - $($route.routeName)" -ForegroundColor Cyan
+                Write-Host "  ID: $($route.id)" -ForegroundColor Gray
                 Write-Host "  From: $($route.startPoint)" -ForegroundColor Gray
                 Write-Host "  To: $($route.endPoint)" -ForegroundColor Gray
                 Write-Host "  Type: $($route.transportType)" -ForegroundColor Gray
@@ -161,12 +630,6 @@ function Show-Trips {
 }
 
 function Purchase-Ticket {
-    if ($null -eq $Global:CurrentUser) {
-        Write-Error "Please login first!"
-        Read-Host "Press Enter to continue"
-        return
-    }
-    
     Write-Title "PURCHASE TICKET"
     
     Write-Host "`nTicket Types:" -ForegroundColor Yellow
@@ -177,6 +640,12 @@ function Purchase-Ticket {
     Write-Host "5. MONTHLY_PASS (N`$1000.00)"
     
     $choice = Read-Host "`nSelect ticket type (1-5)"
+    
+    if ([int]$choice -lt 1 -or [int]$choice -gt 5) {
+        Write-Error "Invalid ticket type"
+        Read-Host "Press Enter to continue"
+        return
+    }
     
     $ticketTypes = @("SINGLE_RIDE", "MULTIPLE_RIDE", "DAILY_PASS", "WEEKLY_PASS", "MONTHLY_PASS")
     $ticketType = $ticketTypes[[int]$choice - 1]
@@ -192,7 +661,7 @@ function Purchase-Ticket {
             paymentMethod = "CREDIT_CARD"
         } | ConvertTo-Json
         
-        $response = Invoke-RestMethod -Uri "http://localhost:9092/ticketing/tickets/purchase" `
+        $response = Invoke-RestMethod -Uri "http://localhost:9096/ticketing/tickets/purchase" `
             -Method Post `
             -ContentType "application/json" `
             -Body $body
@@ -201,7 +670,7 @@ function Purchase-Ticket {
         Write-Host "Ticket ID: $($response.ticketId)" -ForegroundColor Cyan
         Write-Host "Price: N`$$($response.price)" -ForegroundColor Cyan
         Write-Host "Status: $($response.status)" -ForegroundColor Yellow
-        Write-Host "`nPayment is being processed automatically..." -ForegroundColor Gray
+        Write-Info "Payment is being processed automatically..."
         
     } catch {
         Write-Error "Purchase failed: $($_.Exception.Message)"
@@ -211,16 +680,10 @@ function Purchase-Ticket {
 }
 
 function Show-MyTickets {
-    if ($null -eq $Global:CurrentUser) {
-        Write-Error "Please login first!"
-        Read-Host "Press Enter to continue"
-        return
-    }
-    
     Write-Title "MY TICKETS"
     
     try {
-        $tickets = Invoke-RestMethod -Uri "http://localhost:9092/ticketing/users/$($Global:CurrentUser.UserId)/tickets" -Method Get
+        $tickets = Invoke-RestMethod -Uri "http://localhost:9096/ticketing/users/$($Global:CurrentUser.UserId)/tickets" -Method Get
         
         if ($tickets.Count -eq 0) {
             Write-Info "You have no tickets"
@@ -259,7 +722,7 @@ function Validate-Ticket {
             tripId = $tripId
         } | ConvertTo-Json
         
-        $response = Invoke-RestMethod -Uri "http://localhost:9092/ticketing/tickets/validate" `
+        $response = Invoke-RestMethod -Uri "http://localhost:9096/ticketing/tickets/validate" `
             -Method Post `
             -ContentType "application/json" `
             -Body $body
@@ -276,316 +739,266 @@ function Validate-Ticket {
     Read-Host "`nPress Enter to continue"
 }
 
-# Admin Functions
-function Create-Route {
-    Write-Title "CREATE ROUTE"
-    
-    $routeNumber = Read-Host "Enter route number"
-    $routeName = Read-Host "Enter route name"
-    $startPoint = Read-Host "Enter start point"
-    $endPoint = Read-Host "Enter end point"
-    $stopsInput = Read-Host "Enter stops (comma-separated)"
-    $stops = $stopsInput -split ',' | ForEach-Object { $_.Trim() }
-    
-    Write-Host "`nTransport Type:" -ForegroundColor Yellow
-    Write-Host "1. BUS"
-    Write-Host "2. TRAIN"
-    $typeChoice = Read-Host "Select type (1-2)"
-    $transportType = if ($typeChoice -eq "1") { "BUS" } else { "TRAIN" }
-    
-    try {
-        $body = @{
-            routeNumber = $routeNumber
-            routeName = $routeName
-            startPoint = $startPoint
-            endPoint = $endPoint
-            stops = $stops
-            transportType = $transportType
-        } | ConvertTo-Json
-        
-        $response = Invoke-RestMethod -Uri "http://localhost:9091/transport/routes" `
-            -Method Post `
-            -ContentType "application/json" `
-            -Body $body
-        
-        Write-Success "Route created!"
-        Write-Host "Route ID: $($response.routeId)" -ForegroundColor Cyan
-        
-    } catch {
-        Write-Error "Failed to create route: $($_.Exception.Message)"
-    }
-    
-    Read-Host "`nPress Enter to continue"
-}
+# ============================================
+# MAIN MENU
+# ============================================
 
-function Create-Trip {
-    Write-Title "CREATE TRIP"
+function Show-LoginMenu {
+    Clear-Host
+    Write-Host ""
+    Write-Host "  ============================================" -ForegroundColor Cyan
+    Write-Host "                                              " -ForegroundColor Cyan
+    Write-Host "    TRANSPORT TICKETING SYSTEM                " -ForegroundColor Cyan
+    Write-Host "    Windhoek City Council                     " -ForegroundColor Cyan
+    Write-Host "                                              " -ForegroundColor Cyan
+    Write-Host "  ============================================" -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "  === LOGIN AS ===" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  1. Admin" -ForegroundColor Magenta
+    Write-Host "  2. Passenger" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "  === NEW USER ===" -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "  3. Register as Passenger" -ForegroundColor White
+    Write-Host ""
+    Write-Host "  0. Exit" -ForegroundColor Red
+    Write-Host ""
     
-    $routeId = Read-Host "Enter Route ID"
-    $date = Read-Host "Enter date (YYYY-MM-DD)"
-    $departureTime = Read-Host "Enter departure time (HH:MM)"
-    $arrivalTime = Read-Host "Enter arrival time (HH:MM)"
-    $totalSeats = Read-Host "Enter total seats"
+    $choice = Read-Host "  Select an option"
     
-    try {
-        $body = @{
-            routeId = $routeId
-            date = $date
-            departureTime = $departureTime
-            arrivalTime = $arrivalTime
-            totalSeats = [int]$totalSeats
-        } | ConvertTo-Json
-        
-        $response = Invoke-RestMethod -Uri "http://localhost:9091/transport/trips" `
-            -Method Post `
-            -ContentType "application/json" `
-            -Body $body
-        
-        Write-Success "Trip created!"
-        Write-Host "Trip ID: $($response.tripId)" -ForegroundColor Cyan
-        
-    } catch {
-        Write-Error "Failed to create trip: $($_.Exception.Message)"
-    }
-    
-    Read-Host "`nPress Enter to continue"
-}
-
-function Update-TripStatus {
-    Write-Title "UPDATE TRIP STATUS"
-    
-    $tripId = Read-Host "Enter Trip ID"
-    
-    Write-Host "`nStatus Options:" -ForegroundColor Yellow
-    Write-Host "1. DELAYED"
-    Write-Host "2. CANCELLED"
-    Write-Host "3. IN_PROGRESS"
-    Write-Host "4. COMPLETED"
-    
-    $choice = Read-Host "Select status (1-4)"
-    $statuses = @("DELAYED", "CANCELLED", "IN_PROGRESS", "COMPLETED")
-    $status = $statuses[[int]$choice - 1]
-    
-    $reason = Read-Host "Enter reason"
-    
-    try {
-        $body = @{
-            status = $status
-            reason = $reason
-        } | ConvertTo-Json
-        
-        $response = Invoke-RestMethod -Uri "http://localhost:9091/transport/trips/$tripId/status" `
-            -Method Patch `
-            -ContentType "application/json" `
-            -Body $body
-        
-        Write-Success "Trip status updated!"
-        Write-Host "Notifications sent to affected passengers" -ForegroundColor Gray
-        
-    } catch {
-        Write-Error "Failed to update trip: $($_.Exception.Message)"
-    }
-    
-    Read-Host "`nPress Enter to continue"
-}
-
-function Show-Dashboard {
-    Write-Title "ADMIN DASHBOARD"
-    
-    try {
-        $dashboard = Invoke-RestMethod -Uri "http://localhost:9095/admin/dashboard" -Method Get
-        
-        Write-Host "`nSystem Statistics:" -ForegroundColor Cyan
-        Write-Host "  Total Routes:  $($dashboard.totalRoutes)" -ForegroundColor White
-        Write-Host "  Total Trips:   $($dashboard.totalTrips)" -ForegroundColor White
-        Write-Host "  Total Tickets: $($dashboard.totalTickets)" -ForegroundColor White
-        Write-Host "  Total Revenue: N`$$($dashboard.totalRevenue)" -ForegroundColor Green
-        
-    } catch {
-        Write-Error "Failed to fetch dashboard: $($_.Exception.Message)"
-    }
-    
-    Read-Host "`nPress Enter to continue"
-}
-
-function Show-SalesReport {
-    Write-Title "SALES REPORT"
-    
-    try {
-        $report = Invoke-RestMethod -Uri "http://localhost:9095/admin/reports/sales" -Method Get
-        
-        Write-Host "`nSales Summary:" -ForegroundColor Cyan
-        Write-Host "  Total Tickets Sold: $($report.totalTicketsSold)" -ForegroundColor White
-        Write-Host "  Total Revenue: N`$$($report.totalRevenue)" -ForegroundColor Green
-        
-        Write-Host "`nBreakdown by Ticket Type:" -ForegroundColor Cyan
-        foreach ($type in $report.ticketsByType.PSObject.Properties) {
-            $revenue = $report.revenueByType.($type.Name)
-            Write-Host "  $($type.Name): $($type.Value) tickets (N`$$revenue)" -ForegroundColor White
+    switch ($choice) {
+        "1" { 
+            if (Login-Admin) {
+                while (Show-AdminDashboard) { }
+            }
         }
-        
-        Write-Host "`nReport Date: $($report.reportDate)" -ForegroundColor Gray
-        
-    } catch {
-        Write-Error "Failed to generate report: $($_.Exception.Message)"
-    }
-    
-    Read-Host "`nPress Enter to continue"
-}
-
-function Show-TrafficReport {
-    Write-Title "TRAFFIC REPORT"
-    
-    try {
-        $report = Invoke-RestMethod -Uri "http://localhost:9095/admin/reports/traffic" -Method Get
-        
-        Write-Host "`nTraffic Summary:" -ForegroundColor Cyan
-        Write-Host "  Total Passengers: $($report.totalPassengers)" -ForegroundColor White
-        
-        Write-Host "`nPassengers by Route:" -ForegroundColor Cyan
-        foreach ($route in $report.passengersByRoute.PSObject.Properties) {
-            Write-Host "  Route $($route.Name): $($route.Value) passengers" -ForegroundColor White
+        "2" { 
+            if (Login-Passenger) {
+                while (Show-PassengerDashboard) { }
+            }
         }
-        
-        Write-Host "`nReport Date: $($report.reportDate)" -ForegroundColor Gray
-        
-    } catch {
-        Write-Error "Failed to generate report: $($_.Exception.Message)"
+        "3" { 
+            Register-Passenger
+        }
+        "0" { 
+            Write-Host "`n  Thank you for using Transport Ticketing System!" -ForegroundColor Green
+            Write-Host "  Goodbye!`n" -ForegroundColor Cyan
+            return $false
+        }
+        default { 
+            Write-Error "Invalid selection. Please try again."
+            Start-Sleep -Seconds 2
+        }
     }
     
-    Read-Host "`nPress Enter to continue"
+    return $true
 }
 
-# Menu Functions
-function Show-PassengerMenu {
-    while ($true) {
-        Clear-Host
-        Write-Title "PASSENGER MENU"
-        
-        if ($null -ne $Global:CurrentUser) {
-            Write-Host "Logged in as: $($Global:CurrentUser.FirstName) $($Global:CurrentUser.LastName)" -ForegroundColor Green
-            Write-Host "Email: $($Global:CurrentUser.Email)" -ForegroundColor Gray
+# ============================================
+# INITIALIZATION AND MAIN EXECUTION
+# ============================================
+
+function Initialize-Application {
+    Write-Title "TRANSPORT TICKETING SYSTEM"
+    Write-Host "Initializing application..." -ForegroundColor Yellow
+    
+    # Check if services are running
+    if (-not (Test-ServicesRunning)) {
+        Write-Error "Required services are not running."
+        Write-Host "Please ensure the following services are running:" -ForegroundColor Yellow
+        Write-Host "- Passenger Service (port 9090)" -ForegroundColor Gray
+        Write-Host "- Transport Service (port 9091)" -ForegroundColor Gray
+        Write-Host "- Ticketing Service (port 9096)" -ForegroundColor Gray
+        Write-Host "- Admin Service (port 9095)" -ForegroundColor Gray
+        Write-Host ""
+        Write-Host "Start services with: docker-compose up -d" -ForegroundColor Cyan
+        Read-Host "`nPress Enter to exit"
+        exit 1
+    }
+    
+    Write-Success "Services are running and accessible"
+    Start-Sleep -Seconds 1
+}
+
+function Main {
+    # Clear screen and show welcome
+    Clear-Host
+    
+    # Initialize application
+    Initialize-Application
+    
+    # Main application loop
+    $running = $true
+    while ($running) {
+        try {
+            $running = Show-LoginMenu
+        }
+        catch {
+            Write-Error "An unexpected error occurred: $($_.Exception.Message)"
+            Write-Warning "Returning to main menu..."
+            Start-Sleep -Seconds 3
+        }
+    }
+}
+
+# ============================================
+# ADDITIONAL HELPER FUNCTIONS
+# ============================================
+
+function Get-UserInput {
+    param(
+        [string]$Prompt,
+        [string]$DefaultValue = "",
+        [switch]$Secure = $false,
+        [switch]$Mandatory = $false
+    )
+    
+    do {
+        if ($Secure) {
+            $input = Read-Host $Prompt -AsSecureString
+            if ($input) {
+                $plainText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($input))
+                return $plainText
+            }
         } else {
-            Write-Host "Not logged in" -ForegroundColor Yellow
+            $input = Read-Host $Prompt
+            if ($input) {
+                return $input
+            } elseif ($DefaultValue) {
+                return $DefaultValue
+            }
         }
         
-        Write-Host "`n1. Register"
-        Write-Host "2. Login"
-        Write-Host "3. View Routes"
-        Write-Host "4. View Trips"
-        Write-Host "5. Purchase Ticket"
-        Write-Host "6. My Tickets"
-        Write-Host "7. Validate Ticket"
-        Write-Host "8. Logout"
-        Write-Host "0. Back to Main Menu"
+        if ($Mandatory -and -not $input) {
+            Write-Error "This field is required. Please enter a value."
+        }
+    } while ($Mandatory -and -not $input)
+    
+    return $null
+}
+
+function Confirm-Action {
+    param(
+        [string]$Message = "Are you sure you want to continue?",
+        [string]$YesText = "Yes",
+        [string]$NoText = "No"
+    )
+    
+    $choice = $null
+    while ($choice -notin @('Y', 'N')) {
+        Write-Host "`n$Message" -ForegroundColor Yellow
+        Write-Host "Y: $YesText" -ForegroundColor Green
+        Write-Host "N: $NoText" -ForegroundColor Red
+        $choice = (Read-Host "Enter your choice (Y/N)").ToUpper()
+    }
+    
+    return $choice -eq 'Y'
+}
+
+function Show-SystemInfo {
+    Write-Title "SYSTEM INFORMATION"
+    
+    try {
+        # Test all services
+        $services = @(
+            @{Name = "Passenger Service"; Url = "http://localhost:9090/passenger/health"},
+            @{Name = "Transport Service"; Url = "http://localhost:9091/transport/health"},
+            @{Name = "Ticketing Service"; Url = "http://localhost:9096/ticketing/health"},
+            @{Name = "Admin Service"; Url = "http://localhost:9095/admin/health"}
+        )
         
-        $choice = Read-Host "`nEnter your choice"
+        foreach ($service in $services) {
+            try {
+                $response = Invoke-RestMethod -Uri $service.Url -Method Get -TimeoutSec 3
+                Write-Host "✓ $($service.Name): RUNNING" -ForegroundColor Green
+            } catch {
+                Write-Host "✗ $($service.Name): OFFLINE" -ForegroundColor Red
+            }
+        }
         
-        switch ($choice) {
-            "1" { Register-User }
-            "2" { Login-User }
-            "3" { Show-Routes }
-            "4" { Show-Trips }
-            "5" { Purchase-Ticket }
-            "6" { Show-MyTickets }
-            "7" { Validate-Ticket }
-            "8" { 
-                $Global:CurrentUser = $null
-                Write-Success "Logged out successfully"
-                Start-Sleep -Seconds 1
-            }
-            "0" { return }
-            default { 
-                Write-Error "Invalid choice"
-                Start-Sleep -Seconds 1
-            }
+        Write-Host ""
+        Write-Host "Current User: $(if($Global:CurrentUser){$Global:CurrentUser.Email}else{'Not logged in'})" -ForegroundColor Gray
+        Write-Host "User Role: $(if($Global:IsAdmin){'Administrator'}elseif($Global:CurrentUser){'Passenger'}else{'None'})" -ForegroundColor Gray
+        
+    } catch {
+        Write-Error "Unable to retrieve system information"
+    }
+    
+    Read-Host "`nPress Enter to continue"
+}
+# ============================================
+# ENHANCED ERROR HANDLING
+# ============================================
+
+function Invoke-SafeRestMethod {
+    param(
+        [string]$Uri,
+        [string]$Method = "Get",
+        [object]$Body = $null,
+        [string]$ContentType = "application/json",
+        [int]$TimeoutSec = 10
+    )
+    
+    try {
+        $params = @{
+            Uri = $Uri
+            Method = $Method
+            ContentType = $ContentType
+            TimeoutSec = $TimeoutSec
+        }
+        
+        if ($Body) {
+            $params.Body = if ($Body -is [string]) { $Body } else { $Body | ConvertTo-Json }
+        }
+        
+        return Invoke-RestMethod @params
+    }
+    catch {
+        $statusCode = $_.Exception.Response.StatusCode.value__
+        $message = $_.Exception.Message
+        
+        switch ($statusCode) {
+            400 { throw "Bad Request: The request was invalid. Please check your input." }
+            401 { throw "Unauthorized: Please login again." }
+            403 { throw "Forbidden: You don't have permission to perform this action." }
+            404 { throw "Not Found: The requested resource was not found." }
+            500 { throw "Internal Server Error: Please try again later." }
+            default { throw "Network Error: $message" }
         }
     }
 }
 
-function Show-AdminMenu {
-    while ($true) {
-        Clear-Host
-        Write-Title "ADMIN MENU"
-        
-        Write-Host "`n1. View Dashboard"
-        Write-Host "2. View All Routes"
-        Write-Host "3. View All Trips"
-        Write-Host "4. Create Route"
-        Write-Host "5. Create Trip"
-        Write-Host "6. Update Trip Status"
-        Write-Host "7. Sales Report"
-        Write-Host "8. Traffic Report"
-        Write-Host "0. Back to Main Menu"
-        
-        $choice = Read-Host "`nEnter your choice"
-        
-        switch ($choice) {
-            "1" { Show-Dashboard }
-            "2" { Show-Routes }
-            "3" { Show-Trips }
-            "4" { Create-Route }
-            "5" { Create-Trip }
-            "6" { Update-TripStatus }
-            "7" { Show-SalesReport }
-            "8" { Show-TrafficReport }
-            "0" { return }
-            default { 
-                Write-Error "Invalid choice"
-                Start-Sleep -Seconds 1
-            }
-        }
+# ============================================
+# SCRIPT EXECUTION
+# ============================================
+
+# Handle Ctrl+C gracefully
+$null = Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action {
+    if ($Global:CurrentUser) {
+        Write-Host "`nLogging out..." -ForegroundColor Yellow
     }
+    Write-Host "Goodbye!" -ForegroundColor Cyan
 }
 
-function Show-MainMenu {
-    while ($true) {
-        Clear-Host
-        Write-Host ""
-        Write-Host "  ╔════════════════════════════════════════════╗" -ForegroundColor Cyan
-        Write-Host "  ║                                            ║" -ForegroundColor Cyan
-        Write-Host "  ║   TRANSPORT TICKETING SYSTEM               ║" -ForegroundColor Cyan
-        Write-Host "  ║   Windhoek City Council                    ║" -ForegroundColor Cyan
-        Write-Host "  ║                                            ║" -ForegroundColor Cyan
-        Write-Host "  ╚════════════════════════════════════════════╝" -ForegroundColor Cyan
-        Write-Host ""
-        
-        Write-Host "  1. Passenger Portal" -ForegroundColor White
-        Write-Host "  2. Admin Portal" -ForegroundColor White
-        Write-Host "  3. Validator Portal" -ForegroundColor White
-        Write-Host "  0. Exit" -ForegroundColor White
-        Write-Host ""
-        
-        $choice = Read-Host "  Select an option"
-        
-        switch ($choice) {
-            "1" { Show-PassengerMenu }
-            "2" { Show-AdminMenu }
-            "3" { Validate-Ticket }
-            "0" { 
-                Write-Host "`n  Thank you for using the Transport Ticketing System!" -ForegroundColor Cyan
-                Write-Host ""
-                exit 
-            }
-            default { 
-                Write-Error "Invalid choice"
-                Start-Sleep -Seconds 1
-            }
-        }
-    }
-}
+# Set window title
+$Host.UI.RawUI.WindowTitle = "Transport Ticketing System Client"
+
+# Set encoding for proper character display
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 # Main execution
-Clear-Host
-Write-Title "TRANSPORT TICKETING SYSTEM"
-Write-Host "Checking if services are running..." -ForegroundColor Yellow
-
-if (Test-ServicesRunning) {
-    Write-Success "All services are operational!"
-    Start-Sleep -Seconds 2
-    Show-MainMenu
-} else {
-    Write-Host "`nPlease start the services first:" -ForegroundColor Yellow
-    Write-Host "  docker-compose up -d" -ForegroundColor White
-    Write-Host ""
+try {
+    Main
+}
+catch {
+    Write-Error "Fatal error: $($_.Exception.Message)"
+    Write-Host "The application will now exit." -ForegroundColor Red
+    Read-Host "Press Enter to continue"
+    exit 1
+}
+finally {
+    # Cleanup
+    $Global:CurrentUser = $null
+    $Global:IsAdmin = $false
 }

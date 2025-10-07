@@ -6,12 +6,12 @@ import ballerinax/mongodb;
 import ballerinax/kafka;
 
 // Configuration
-configurable string mongoHost = "localhost";
+configurable string mongoHost = "mongodb";
 configurable int mongoPort = 27017;
 configurable string mongoUsername = "admin";
 configurable string mongoPassword = "password123";
 configurable string mongoDatabase = "transport_db";
-configurable string kafkaBootstrapServers = "localhost:9092";
+configurable string kafkaBootstrapServers = "kafka:9092";
 
 // MongoDB client
 final mongodb:Client mongoClient = check new ({
@@ -160,10 +160,11 @@ function calculateValidity(string ticketType) returns [string, string, int?] {
 service /ticketing on new http:Listener(9092) {
     
     resource function get health() returns string {
+        log:printInfo("Ticketing service health check");
         return "Ticketing Service is running";
     }
 
-    // Purchase a ticket
+    // Purchase a ticket - IMPROVED KAFKA PUBLISHING
     resource function post tickets/purchase(TicketPurchaseRequest request) returns http:Created|http:BadRequest|http:InternalServerError {
         do {
             mongodb:Database db = check mongoClient->getDatabase(mongoDatabase);
@@ -191,7 +192,7 @@ service /ticketing on new http:Listener(9092) {
 
             check ticketsCollection->insertOne(newTicket);
             
-            // Publish ticket request event to Kafka
+            // Publish ticket request event to Kafka with better error handling
             TicketRequestEvent ticketEvent = {
                 ticketId: ticketId,
                 userId: request.userId,
@@ -201,12 +202,22 @@ service /ticketing on new http:Listener(9092) {
                 timestamp: currentTime
             };
 
-            check kafkaProducer->send({
+            log:printInfo(string `Publishing ticket request to Kafka for ticket: ${ticketId}`);
+            
+            error? kafkaResult = kafkaProducer->send({
                 topic: "ticket.requests",
                 value: ticketEvent.toJsonString().toBytes()
             });
 
-            log:printInfo(string `Ticket purchase initiated: ${ticketId}`);
+            if kafkaResult is error {
+                log:printError(string `Failed to publish to Kafka topic 'ticket.requests': ${kafkaResult.message()}`, 'error = kafkaResult);
+                // Ticket is created but payment won't be processed automatically
+                // Consider implementing a retry mechanism here
+            } else {
+                log:printInfo(string `Successfully published to Kafka topic 'ticket.requests' for ticket: ${ticketId}`);
+            }
+
+            log:printInfo(string `Ticket purchase initiated: ${ticketId}, price: ${price}, type: ${request.ticketType}`);
             
             return <http:Created>{
                 body: {
@@ -336,7 +347,7 @@ service /ticketing on new http:Listener(9092) {
                 };
             }
 
-            // Check if ticket has expired - FIXED: Convert time:Seconds to decimal
+            // Check if ticket has expired
             time:Utc validUntil = check time:utcFromString(ticket.validUntil);
             time:Utc now = time:utcNow();
             time:Seconds timeDiff = time:utcDiffSeconds(validUntil, now);
@@ -360,7 +371,7 @@ service /ticketing on new http:Listener(9092) {
                 };
             }
 
-            // Check rides remaining for multi-ride tickets - FIXED: Properly handle int?
+            // Check rides remaining for multi-ride tickets 
             int? ridesRemainingValue = ticket.ridesRemaining;
             if ridesRemainingValue is int {
                 if ridesRemainingValue <= 0 {
@@ -402,7 +413,7 @@ service /ticketing on new http:Listener(9092) {
 
             _ = check ticketsCollection->updateOne(query, update);
 
-            // Publish validation event
+            // Publish validation event to Kafka
             TicketValidatedEvent validationEvent = {
                 ticketId: request.ticketId,
                 userId: ticket.userId,
@@ -411,12 +422,18 @@ service /ticketing on new http:Listener(9092) {
                 timestamp: currentTime
             };
 
-            check kafkaProducer->send({
+            error? kafkaResult = kafkaProducer->send({
                 topic: "ticket.validated",
                 value: validationEvent.toJsonString().toBytes()
             });
 
-            log:printInfo(string `Ticket validated: ${request.ticketId}`);
+            if kafkaResult is error {
+                log:printError(string `Failed to publish validation event to Kafka: ${kafkaResult.message()}`, 'error = kafkaResult);
+            } else {
+                log:printInfo(string `Published validation event to Kafka for ticket: ${request.ticketId}`);
+            }
+
+            log:printInfo(string `Ticket validated: ${request.ticketId} by ${request.validatorId}`);
             
             int? remainingRides = ();
             if ridesRemainingValue is int {
@@ -441,36 +458,74 @@ service /ticketing on new http:Listener(9092) {
             };
         }
     }
+
+    // Update ticket status (e.g. after payment)
+    resource function put tickets/[string ticketId]/status(string newStatus, string? paymentId) returns http:Ok|http:NotFound|http:InternalServerError {
+        do {
+            mongodb:Database db = check mongoClient->getDatabase(mongoDatabase);
+            mongodb:Collection ticketsCollection = check db->getCollection("tickets");
+
+            map<json> query = {"id": ticketId};
+            string currentTime = time:utcToString(time:utcNow());
+
+            mongodb:Update update = {
+                "$set": {
+                    "status": newStatus,
+                    "updatedAt": currentTime
+                }
+            };
+
+            // Add paymentId if provided
+            if paymentId is string {
+                update["$set"]["paymentId"] = paymentId;
+            }
+
+            var result = check ticketsCollection->updateOne(query, update);
+            
+            log:printInfo(string `Ticket ${ticketId} status updated to ${newStatus}`);
+            
+            return <http:Ok>{
+                body: {
+                    message: string `Ticket status updated to ${newStatus}`,
+                    ticketId: ticketId,
+                    status: newStatus
+                }
+            };
+
+        } on fail error e {
+            log:printError("Error updating ticket status", 'error = e);
+            return <http:InternalServerError>{
+                body: {
+                    message: "Failed to update ticket status",
+                    timestamp: time:utcToString(time:utcNow())
+                }
+            };
+        }
+    }
 }
 
-// Kafka consumer service for payment events - FIXED: Use anydata for flexible record handling
+// Kafka consumer service for payment events - IMPROVED VERSION
 service on paymentConsumer {
-
-    remote function onConsumerRecord(kafka:Caller caller, anydata[] records) returns error? {
-        foreach var rec in records {
-            
-            byte[]? value = ();
-            
-            // Extract value from record
-            if rec is map<anydata> {
-                anydata valueField = rec["value"];
-                if valueField is byte[] {
-                    value = valueField;
-                }
-            }
+    remote function onConsumerRecord(kafka:Caller caller, kafka:ConsumerRecord[] records) returns error? {
+        log:printInfo(string `Received ${records.length()} payment event(s) from Kafka`);
+        
+        foreach kafka:ConsumerRecord record in records {
+            byte[]|error value = record.value;
             
             if value is byte[] {
                 string|error payloadResult = string:fromBytes(value);
                 if payloadResult is string {
+                    log:printInfo("Raw payment event: " + payloadResult);
+                    
                     json|error jsonResult = payloadResult.fromJsonString();
                     if jsonResult is json {
                         PaymentProcessedEvent|error eventResult = jsonResult.cloneWithType(PaymentProcessedEvent);
                         if eventResult is PaymentProcessedEvent {
                             PaymentProcessedEvent event = eventResult;
 
-                            log:printInfo(string `Received payment event for ticket: ${event.ticketId}, status: ${event.status}`);
+                            log:printInfo(string `Processing payment event for ticket: ${event.ticketId}, status: ${event.status}, paymentId: ${event.paymentId}`);
 
-                            // update ticket in MongoDB
+                            // Update ticket in MongoDB
                             mongodb:Database db = check mongoClient->getDatabase(mongoDatabase);
                             mongodb:Collection ticketsCollection = check db->getCollection("tickets");
 
@@ -486,8 +541,19 @@ service on paymentConsumer {
                                 }
                             };
 
-                            _ = check ticketsCollection->updateOne(query, update);
-                            log:printInfo(string `Ticket ${event.ticketId} status updated to ${newStatus}`);
+                            var updateResult = check ticketsCollection->updateOne(query, update);
+                            
+                            if updateResult is mongodb:UpdateResult {
+                                if updateResult.matchedCount > 0 {
+                                    log:printInfo(string `Ticket ${event.ticketId} status updated to ${newStatus}`);
+                                } else {
+                                    log:printWarn(string `No ticket found with ID: ${event.ticketId} to update`);
+                                }
+                            }
+                            
+                            // Commit the offset after successful processing
+                            check caller->commit([record]);
+                            
                         } else {
                             log:printError("Failed to cast payload to PaymentProcessedEvent", 'error = eventResult);
                         }
@@ -501,7 +567,14 @@ service on paymentConsumer {
                 log:printWarn("Could not extract byte[] value from Kafka record");
             }
         }
-
         return;
     }
+}
+
+// Initialize function to log service startup
+public function init() returns error? {
+    log:printInfo("Ticketing Service starting...");
+    log:printInfo(string `Kafka bootstrap servers: ${kafkaBootstrapServers}`);
+    log:printInfo(string `MongoDB host: ${mongoHost}:${mongoPort}`);
+    log:printInfo("Ticketing Service initialized successfully");
 }

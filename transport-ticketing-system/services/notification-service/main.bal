@@ -4,7 +4,7 @@ import ballerinax/kafka;
 import ballerina/time;
 
 // Configuration
-configurable string kafkaBootstrapServers = "localhost:9092";
+configurable string kafkaBootstrapServers = "kafka:9092";
 
 // Kafka consumers for different event types
 listener kafka:Listener paymentConsumer = new (kafka:DEFAULT_URL, {
