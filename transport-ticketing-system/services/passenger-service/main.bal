@@ -6,11 +6,12 @@ import ballerinax/mongodb;
 import ballerina/crypto;
 
 // MongoDB configuration
-configurable string mongoHost = "mongodb";
-configurable int mongoPort = 27017;
-configurable string mongoUsername = "admin";
-configurable string mongoPassword = "password123";
-configurable string mongoDatabase = "transport_db";
+configurable string mongoHost = ?;
+configurable int mongoPort = ?;
+configurable string mongoUsername = ?;
+configurable string mongoPassword = ?;
+configurable string mongoDatabase = ?;
+configurable string kafkaBootstrapServers = ?;
 
 // MongoDB client
 final mongodb:Client mongoClient = check new ({

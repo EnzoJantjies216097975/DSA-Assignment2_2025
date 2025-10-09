@@ -7,12 +7,12 @@ import ballerinax/kafka;
 import ballerina/lang.runtime;
 
 // Configuration
-configurable string mongoHost = "mongodb";
-configurable int mongoPort = 27017;
-configurable string mongoUsername = "admin";
-configurable string mongoPassword = "password123";
-configurable string mongoDatabase = "transport_db";
-configurable string kafkaBootstrapServers = "kafka:9092";
+configurable string mongoHost = ?;
+configurable int mongoPort = ?;
+configurable string mongoUsername = ?;
+configurable string mongoPassword = ?;
+configurable string mongoDatabase = ?;
+configurable string kafkaBootstrapServers = ?;
 
 // MongoDB client
 final mongodb:Client mongoClient = check new ({
@@ -36,10 +36,12 @@ final kafka:Producer kafkaProducer = check new (kafkaBootstrapServers, {
     retryCount: 3
 });
 
-// Kafka consumer for ticket requests - SIMPLE CONFIG
+// Kafka consumer for ticket requests
 listener kafka:Listener ticketRequestListener = new (kafkaBootstrapServers, {
     groupId: "payment-ticket-group",
-    topics: ["ticket.requests"]
+    topics: ["ticket.requests"],
+    pollingInterval: 1.0,
+    autoCommit: false
 });
 
 // Types
@@ -80,19 +82,24 @@ public type PaymentProcessedEvent record {|
     string timestamp;
 |};
 
+// Simulated payment processing
+function simulatePaymentProcessing() returns boolean {
+    // Simulate 95% success rate
+    int random = <int>(time:utcNow()[0] % 100);
+    return random < 95;
+}
+
 // Process payment function
 function processPayment(string ticketId, string userId, decimal amount, string paymentMethod) returns string|error {
-    log:printInfo(string `PROCESSING PAYMENT: ticket=${ticketId}, user=${userId}, amount=${amount}`);
-    
     mongodb:Database db = check mongoClient->getDatabase(mongoDatabase);
     mongodb:Collection paymentsCollection = check db->getCollection("payments");
 
     string paymentId = uuid:createType1AsString();
     string currentTime = time:utcToString(time:utcNow());
     
-    // Simulate payment processing
+    // Simulate payment processing delay
     runtime:sleep(2);
-    boolean paymentSuccess = true; // Always succeed for testing
+    boolean paymentSuccess = simulatePaymentProcessing();
     
     string paymentStatus = paymentSuccess ? "COMPLETED" : "FAILED";
     string transactionId = paymentSuccess ? uuid:createType1AsString() : "";
@@ -126,7 +133,7 @@ function processPayment(string ticketId, string userId, decimal amount, string p
         value: paymentEvent.toJsonString().toBytes()
     });
 
-    log:printInfo(string `PAYMENT SUCCESS: ${paymentId} for ticket ${ticketId}`);
+    log:printInfo(string `Payment ${paymentStatus} for ticket: ${ticketId}, paymentId: ${paymentId}`);
     return paymentStatus;
 }
 
@@ -134,72 +141,154 @@ function processPayment(string ticketId, string userId, decimal amount, string p
 service /payment on new http:Listener(9093) {
     
     resource function get health() returns string {
-        log:printInfo("Health check - HTTP service working");
+        log:printInfo("Payment service health check - HTTP service is running");
         return "Payment Service is running";
     }
 
     resource function post payments/process(ProcessPaymentRequest request) returns http:Created|http:BadRequest|http:InternalServerError {
         do {
-            log:printInfo(string `Manual payment for ticket: ${request.ticketId}`);
+            log:printInfo(string `Manual payment processing for ticket: ${request.ticketId}`);
             string paymentStatus = check processPayment(request.ticketId, request.userId, request.amount, request.paymentMethod);
             
-            return <http:Created>{
-                body: {
-                    message: "Payment processed successfully",
-                    paymentId: uuid:createType1AsString(),
-                    status: paymentStatus
-                }
-            };
+            if paymentStatus == "COMPLETED" {
+                return <http:Created>{
+                    body: {
+                        message: "Payment processed successfully",
+                        paymentId: uuid:createType1AsString(),
+                        status: paymentStatus
+                    }
+                };
+            } else {
+                return <http:BadRequest>{
+                    body: {
+                        message: "Payment failed",
+                        paymentId: uuid:createType1AsString(),
+                        status: paymentStatus,
+                        timestamp: time:utcToString(time:utcNow())
+                    }
+                };
+            }
 
         } on fail error e {
-            log:printError("Payment processing failed", 'error = e);
+            log:printError("Error processing payment", 'error = e);
             return <http:InternalServerError>{
-                body: { message: "Failed to process payment" }
+                body: {
+                    message: "Failed to process payment",
+                    timestamp: time:utcToString(time:utcNow())
+                }
             };
+        }
+    }
+
+    resource function get payments/[string paymentId]() returns Payment|http:NotFound|http:InternalServerError {
+        do {
+            mongodb:Database db = check mongoClient->getDatabase(mongoDatabase);
+            mongodb:Collection paymentsCollection = check db->getCollection("payments");
+
+            map<json> query = { "id": paymentId };
+            stream<record {}, error?> items = check paymentsCollection->find(query);
+
+            Payment[] paymentArray = [];
+            check items.forEach(function(record {} item) {
+                Payment|error p = item.cloneWithType(Payment);
+                if p is Payment {
+                    paymentArray.push(p);
+                }
+            });
+
+            if paymentArray.length() > 0 {
+                return paymentArray[0];
+            } else {
+                return <http:NotFound>{};
+            }
+
+        } on fail error e {
+            log:printError("Error fetching payment", 'error = e);
+            return <http:InternalServerError>{};
+        }
+    }
+
+    resource function get users/[string userId]/payments() returns Payment[]|http:InternalServerError {
+        do {
+            mongodb:Database db = check mongoClient->getDatabase(mongoDatabase);
+            mongodb:Collection paymentsCollection = check db->getCollection("payments");
+
+            map<json> query = { "userId": userId };
+            stream<record {}, error?> items = check paymentsCollection->find(query);
+
+            Payment[] paymentArray = [];
+            error? e = items.forEach(function(record {} item) {
+                Payment|error p = item.cloneWithType(Payment);
+                if p is Payment {
+                    paymentArray.push(p);
+                }
+            });
+
+            return paymentArray;
+
+        } on fail error e {
+            log:printError("Error fetching user payments", 'error = e);
+            return <http:InternalServerError>{};
         }
     }
 }
 
-// SIMPLE KAFKA CONSUMER SERVICE
-@kafka:ServiceConfig {
-    topic: "ticket.requests",
-    groupId: "payment-ticket-group",
-    autoCommit: true
-}
-service kafka:Service on ticketRequestListener {
-    
-    remote function onConsumerRecord(kafka:Caller caller, kafka:ConsumerRecord[] records) returns error? {
-        log:printInfo(string `KAFKA: Received ${records.length()} records`);
-        
-        foreach var record in records {
-            log:printInfo("KAFKA: Processing record...");
-            
-            // Simple processing - just log and process
-            string message = check string:fromBytes(check record.value);
-            log:printInfo("KAFKA Message: " + message);
-            
-            // Parse and process
-            json jsonData = check message.fromJsonString();
-            TicketRequestEvent event = check jsonData.cloneWithType(TicketRequestEvent);
-            
-            log:printInfo(string `KAFKA: Processing ticket ${event.ticketId}, amount ${event.price}`);
-            
-            // Process payment
-            error? result = processPayment(event.ticketId, event.userId, event.price, "KAFKA_AUTO");
-            if result is error {
-                log:printError(string `KAFKA: Payment failed for ${event.ticketId}`, 'error = result);
+
+// Kafka Consumer Service  - BytesConsumerRecord for byte[] payloads
+service on ticketRequestListener {
+    remote function onConsumerRecord(kafka:Caller caller, kafka:BytesConsumerRecord[] records) returns error? {
+        log:printInfo(string `[KAFKA] Payment service received ${records.length()} records from ticket.requests`);
+
+        // iterate safely; 'kRecord' is each BytesConsumerRecord
+        foreach var kRecord in records {
+            log:printInfo("[KAFKA] Processing record from ticket.requests...");
+
+            byte[]? value = kRecord.value;
+            if value is byte[] {
+                string|error message = string:fromBytes(value);
+                if message is string {
+                    log:printInfo("[KAFKA] Raw message: " + message);
+
+                    json|error jsonData = message.fromJsonString();
+                    if jsonData is json {
+                        TicketRequestEvent|error event = jsonData.cloneWithType(TicketRequestEvent);
+                        if event is TicketRequestEvent {
+                            log:printInfo(string `[KAFKA] Processing ticket: ${event.ticketId}, user: ${event.userId}, amount: ${event.price}`);
+
+                            // process payment 
+                            string|error result = processPayment(event.ticketId, event.userId, event.price, "AUTOMATIC_KAFKA");
+                            if result is error {
+                                log:printError(string `[KAFKA] Failed to process payment for ticket ${event.ticketId}`, 'error = result);
+                            } else {
+                                log:printInfo(string `[KAFKA] Successfully processed payment for ticket ${event.ticketId}, status: ${result}`);
+                                // commit offsets after success; 'check' propagates errors and is allowed because this function returns error?
+                                check caller->commit();
+                            }
+                        } else {
+                            log:printError("[KAFKA] Failed to convert JSON to TicketRequestEvent", 'error = event);
+                        }
+                    } else {
+                        log:printError("[KAFKA] Failed to parse message as JSON", 'error = jsonData);
+                    }
+                } else {
+                    log:printError("[KAFKA] Failed to convert bytes to string", 'error = message);
+                }
             } else {
-                log:printInfo(string `KAFKA: Payment successful for ${event.ticketId}`);
+                log:printError("[KAFKA] No value in Kafka record");
             }
         }
+
         return;
     }
 }
 
-public function main() returns error? {
-    log:printInfo("=== PAYMENT SERVICE STARTED ===");
-    log:printInfo("Kafka: " + kafkaBootstrapServers);
-    log:printInfo("MongoDB: " + mongoHost + ":" + mongoPort.toString());
-    log:printInfo("HTTP: 9093, Kafka Consumer: ACTIVE");
-    log:printInfo("=== READY FOR TICKET REQUESTS ===");
+
+// Initialize function with better logging
+function init() returns error? {
+    log:printInfo("=== PAYMENT SERVICE STARTING ===");
+    log:printInfo(string `Kafka: ${kafkaBootstrapServers}`);
+    log:printInfo(string `MongoDB: ${mongoHost}:${mongoPort}`);
+    log:printInfo("Listening on topic: ticket.requests");
+    log:printInfo("Group ID: payment-ticket-group");
+    log:printInfo("=== PAYMENT SERVICE READY ===");
 }

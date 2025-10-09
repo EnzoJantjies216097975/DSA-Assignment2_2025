@@ -319,12 +319,13 @@ service /ticketing on new http:Listener(9092) {
             stream<record {}, error?> resultStream = check ticketsCollection->find(query);
 
             Ticket[] tickets = [];
-            error? e = resultStream.forEach(function(record {} item) {
-                Ticket|error convertedTicket = item.cloneWithType(Ticket);
-                if convertedTicket is Ticket {
-                    tickets.push(convertedTicket);
-                }
-            });
+            check from var item in resultStream
+                do {
+                    Ticket|error convertedTicket = item.cloneWithType(Ticket);
+                    if convertedTicket is Ticket {
+                        tickets.push(convertedTicket);
+                    }
+                };
 
             if tickets.length() == 0 {
                 return <http:NotFound>{
@@ -477,10 +478,15 @@ service /ticketing on new http:Listener(9092) {
 
             // Add paymentId if provided
             if paymentId is string {
-                update["$set"]["paymentId"] = paymentId;
+                json|() existingSet = update["$set"];
+                if existingSet is map<json> {
+                    existingSet["paymentId"] = paymentId;
+                    update["$set"] = existingSet;
+                }
             }
 
-            var result = check ticketsCollection->updateOne(query, update);
+
+           _ = check ticketsCollection->updateOne(query, update);
             
             log:printInfo(string `Ticket ${ticketId} status updated to ${newStatus}`);
             
@@ -506,12 +512,12 @@ service /ticketing on new http:Listener(9092) {
 
 // Kafka consumer service for payment events - IMPROVED VERSION
 service on paymentConsumer {
-    remote function onConsumerRecord(kafka:Caller caller, kafka:ConsumerRecord[] records) returns error? {
+    remote function onConsumerRecord(kafka:Caller caller, kafka:BytesConsumerRecord[] records) returns error? {
         log:printInfo(string `Received ${records.length()} payment event(s) from Kafka`);
-        
-        foreach kafka:ConsumerRecord record in records {
-            byte[]|error value = record.value;
-            
+
+        foreach kafka:BytesConsumerRecord rec in records {
+            byte[]|error value = rec.value;
+
             if value is byte[] {
                 string|error payloadResult = string:fromBytes(value);
                 if payloadResult is string {
@@ -552,7 +558,7 @@ service on paymentConsumer {
                             }
                             
                             // Commit the offset after successful processing
-                            check caller->commit([record]);
+                            check caller->commit();
                             
                         } else {
                             log:printError("Failed to cast payload to PaymentProcessedEvent", 'error = eventResult);
@@ -572,7 +578,7 @@ service on paymentConsumer {
 }
 
 // Initialize function to log service startup
-public function init() returns error? {
+function init() returns error? {
     log:printInfo("Ticketing Service starting...");
     log:printInfo(string `Kafka bootstrap servers: ${kafkaBootstrapServers}`);
     log:printInfo(string `MongoDB host: ${mongoHost}:${mongoPort}`);

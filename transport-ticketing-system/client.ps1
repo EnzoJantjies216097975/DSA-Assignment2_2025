@@ -1,9 +1,30 @@
-# Interactive Transport Ticketing System Client
-# Save as: client.ps1
+# Transport Ticketing System Client
+
 
 # Global variables to store session data
 $Global:CurrentUser = $null
 $Global:IsAdmin = $false
+
+# Get MongoDB container name dynamically
+function Get-MongoContainerName {
+    try {
+        $containers = docker ps --format "{{.Names}}" | Select-String -Pattern "mongodb|mongo"
+        if ($containers) {
+            return $containers[0].ToString()
+        }
+        # Try common naming patterns
+        $patterns = @("mongodb", "mongo", "mongodb-1", "mongo-1")
+        foreach ($pattern in $patterns) {
+            $result = docker ps --filter "name=$pattern" --format "{{.Names}}" 2>$null
+            if ($result) {
+                return $result
+            }
+        }
+        return $null
+    } catch {
+        return $null
+    }
+}
 
 # Color functions
 function Write-Title {
@@ -51,23 +72,24 @@ function Test-ServicesRunning {
 function Login-Admin {
     Write-Title "ADMIN LOGIN"
     
-    $email = Read-Host "Enter admin email"
+    $username = Read-Host "Enter admin username"
     $password = Read-Host "Enter admin password" -AsSecureString
     $passwordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))
     
     try {
         $body = @{
-            email = $email
+            email = $username
             password = $passwordPlain
         } | ConvertTo-Json
         
         $response = Invoke-RestMethod -Uri "http://localhost:9090/passenger/login" `
             -Method Post `
             -ContentType "application/json" `
-            -Body $body
+            -Body $body `
+            -ErrorAction Stop
         
         # Fetch full user profile to get role
-        $profile = Invoke-RestMethod -Uri "http://localhost:9090/passenger/profile/$($response.userId)" -Method Get
+        $profile = Invoke-RestMethod -Uri "http://localhost:9090/passenger/profile/$($response.userId)" -Method Get -ErrorAction Stop
         
         # Check if user is actually an admin
         if ($profile.role -ne "ADMIN") {
@@ -93,7 +115,7 @@ function Login-Admin {
         return $true
         
     } catch {
-        Write-Error "Login failed: $($_.Exception.Message)"
+        Write-Error "Login failed: Invalid username or password"
         Read-Host "`nPress Enter to continue"
         return $false
     }
@@ -102,23 +124,24 @@ function Login-Admin {
 function Login-Passenger {
     Write-Title "PASSENGER LOGIN"
     
-    $email = Read-Host "Enter email"
+    $username = Read-Host "Enter username"
     $password = Read-Host "Enter password" -AsSecureString
     $passwordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))
     
     try {
         $body = @{
-            email = $email
+            email = $username
             password = $passwordPlain
         } | ConvertTo-Json
         
         $response = Invoke-RestMethod -Uri "http://localhost:9090/passenger/login" `
             -Method Post `
             -ContentType "application/json" `
-            -Body $body
+            -Body $body `
+            -ErrorAction Stop
         
         # Fetch full user profile to get role
-        $profile = Invoke-RestMethod -Uri "http://localhost:9090/passenger/profile/$($response.userId)" -Method Get
+        $profile = Invoke-RestMethod -Uri "http://localhost:9090/passenger/profile/$($response.userId)" -Method Get -ErrorAction Stop
         
         # Check if user is an admin trying to login as passenger
         if ($profile.role -eq "ADMIN") {
@@ -144,7 +167,7 @@ function Login-Passenger {
         return $true
         
     } catch {
-        Write-Error "Login failed: $($_.Exception.Message)"
+        Write-Error "Login failed: Invalid username or password"
         Read-Host "`nPress Enter to continue"
         return $false
     }
@@ -153,7 +176,7 @@ function Login-Passenger {
 function Register-Passenger {
     Write-Title "PASSENGER REGISTRATION"
     
-    $email = Read-Host "Enter email"
+    $email = Read-Host "Enter email/username"
     $password = Read-Host "Enter password" -AsSecureString
     $passwordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))
     $firstName = Read-Host "Enter first name"
@@ -176,7 +199,7 @@ function Register-Passenger {
         
         Write-Success "Registration successful!"
         Write-Host "User ID: $($response.userId)" -ForegroundColor Gray
-        Write-Host "Email: $($response.email)" -ForegroundColor Gray
+        Write-Host "Username: $($response.email)" -ForegroundColor Gray
         Write-Host ""
         Write-Info "You can now login with your credentials"
         
@@ -196,7 +219,7 @@ function Show-AdminDashboard {
     Write-Title "ADMINISTRATOR DASHBOARD"
     
     Write-Host "Logged in as: $($Global:CurrentUser.FirstName) $($Global:CurrentUser.LastName)" -ForegroundColor Magenta
-    Write-Host "Email: $($Global:CurrentUser.Email)" -ForegroundColor Gray
+    Write-Host "Username: $($Global:CurrentUser.Email)" -ForegroundColor Gray
     Write-Host "Role: ADMINISTRATOR" -ForegroundColor Magenta
     
     # Fetch dashboard stats
@@ -273,7 +296,7 @@ function Show-AdminDashboard {
 function Register-UserByAdmin {
     Write-Title "REGISTER NEW USER (ADMIN)"
     
-    $email = Read-Host "Enter email"
+    $email = Read-Host "Enter email/username"
     $password = Read-Host "Enter password" -AsSecureString
     $passwordPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($password))
     $firstName = Read-Host "Enter first name"
@@ -303,13 +326,20 @@ function Register-UserByAdmin {
         
         # If admin role selected, update it
         if ($role -eq "ADMIN") {
-            $mongoCommand = "use transport_db; db.users.updateOne({email: `"$email`"}, {`$set: {role: `"ADMIN`"}})"
-            docker exec -i mongodb mongosh -u admin -p password123 --quiet --eval $mongoCommand | Out-Null
+            $mongoContainer = Get-MongoContainerName
+            if ($mongoContainer) {
+                $mongoCommand = "use transport_db; db.users.updateOne({email: `"$email`"}, {`$set: {role: `"ADMIN`"}})"
+                docker exec -i $mongoContainer mongosh -u admin -p password123 --quiet --eval $mongoCommand | Out-Null
+            } else {
+                Write-Warning "Could not find MongoDB container. User created as PASSENGER."
+                Write-Info "Run .\make-admin.ps1 to promote user manually"
+                $role = "PASSENGER"
+            }
         }
         
         Write-Success "User registered successfully!"
         Write-Host "User ID: $($response.userId)" -ForegroundColor Gray
-        Write-Host "Email: $($response.email)" -ForegroundColor Gray
+        Write-Host "Username: $($response.email)" -ForegroundColor Gray
         Write-Host "Role: $role" -ForegroundColor $(if($role -eq "ADMIN"){"Magenta"}else{"Green"})
         
     } catch {
@@ -323,10 +353,18 @@ function List-AllUsers {
     Write-Title "ALL REGISTERED USERS"
     
     try {
-        $mongoCommand = 'use transport_db; db.users.find({}, {email: 1, firstName: 1, lastName: 1, role: 1, phone: 1, _id: 0}).sort({createdAt: -1})'
-        $result = docker exec -i mongodb mongosh -u admin -p password123 --quiet --eval $mongoCommand 2>&1
+        $mongoContainer = Get-MongoContainerName
         
-        Write-Host $result
+        if (-not $mongoContainer) {
+            Write-Error "MongoDB container not found"
+            Write-Info "Available containers:"
+            docker ps --format "{{.Names}}" | ForEach-Object { Write-Host "  - $_" -ForegroundColor Gray }
+        } else {
+            $mongoCommand = 'use transport_db; db.users.find({}, {email: 1, firstName: 1, lastName: 1, role: 1, phone: 1, _id: 0}).sort({createdAt: -1})'
+            $result = docker exec -i $mongoContainer mongosh -u admin -p password123 --quiet --eval $mongoCommand 2>&1
+            
+            Write-Host $result
+        }
         
     } catch {
         Write-Error "Failed to fetch users: $($_.Exception.Message)"
@@ -338,16 +376,23 @@ function List-AllUsers {
 function Promote-UserToAdmin {
     Write-Title "PROMOTE USER TO ADMIN"
     
-    $email = Read-Host "Enter user email to promote"
+    $email = Read-Host "Enter user username/email to promote"
     
     try {
-        $mongoCommand = "use transport_db; var result = db.users.updateOne({email: `"$email`"}, {`$set: {role: `"ADMIN`"}}); if (result.matchedCount === 0) { print('ERROR: User not found'); } else { print('SUCCESS: User promoted to ADMIN'); }"
-        $result = docker exec -i mongodb mongosh -u admin -p password123 --quiet --eval $mongoCommand 2>&1
+        $mongoContainer = Get-MongoContainerName
         
-        if ($result -match "SUCCESS") {
-            Write-Success "User promoted to ADMIN successfully!"
+        if (-not $mongoContainer) {
+            Write-Error "MongoDB container not found"
+            Write-Info "Run: .\make-admin.ps1 instead"
         } else {
-            Write-Error "User not found with email: $email"
+            $mongoCommand = "use transport_db; var result = db.users.updateOne({email: `"$email`"}, {`$set: {role: `"ADMIN`"}}); if (result.matchedCount === 0) { print('ERROR: User not found'); } else { print('SUCCESS: User promoted to ADMIN'); }"
+            $result = docker exec -i $mongoContainer mongosh -u admin -p password123 --quiet --eval $mongoCommand 2>&1
+            
+            if ($result -match "SUCCESS") {
+                Write-Success "User promoted to ADMIN successfully!"
+            } else {
+                Write-Error "User not found with username: $email"
+            }
         }
         
     } catch {
@@ -522,11 +567,11 @@ function Show-PassengerDashboard {
     Write-Title "PASSENGER DASHBOARD"
     
     Write-Host "Logged in as: $($Global:CurrentUser.FirstName) $($Global:CurrentUser.LastName)" -ForegroundColor Green
-    Write-Host "Email: $($Global:CurrentUser.Email)" -ForegroundColor Gray
+    Write-Host "Username: $($Global:CurrentUser.Email)" -ForegroundColor Gray
     
     # Show quick stats
     try {
-        $tickets = Invoke-RestMethod -Uri "http://localhost:9096/ticketing/users/$($Global:CurrentUser.UserId)/tickets" -Method Get -ErrorAction SilentlyContinue
+        $tickets = Invoke-RestMethod -Uri "http://localhost:9092/ticketing/users/$($Global:CurrentUser.UserId)/tickets" -Method Get -ErrorAction SilentlyContinue
         $activeTickets = ($tickets | Where-Object { $_.status -eq "PAID" }).Count
         
         Write-Host ""
@@ -661,7 +706,7 @@ function Purchase-Ticket {
             paymentMethod = "CREDIT_CARD"
         } | ConvertTo-Json
         
-        $response = Invoke-RestMethod -Uri "http://localhost:9096/ticketing/tickets/purchase" `
+        $response = Invoke-RestMethod -Uri "http://localhost:9092/ticketing/tickets/purchase" `
             -Method Post `
             -ContentType "application/json" `
             -Body $body
@@ -683,7 +728,7 @@ function Show-MyTickets {
     Write-Title "MY TICKETS"
     
     try {
-        $tickets = Invoke-RestMethod -Uri "http://localhost:9096/ticketing/users/$($Global:CurrentUser.UserId)/tickets" -Method Get
+        $tickets = Invoke-RestMethod -Uri "http://localhost:9092/ticketing/users/$($Global:CurrentUser.UserId)/tickets" -Method Get
         
         if ($tickets.Count -eq 0) {
             Write-Info "You have no tickets"
@@ -722,7 +767,7 @@ function Validate-Ticket {
             tripId = $tripId
         } | ConvertTo-Json
         
-        $response = Invoke-RestMethod -Uri "http://localhost:9096/ticketing/tickets/validate" `
+        $response = Invoke-RestMethod -Uri "http://localhost:9092/ticketing/tickets/validate" `
             -Method Post `
             -ContentType "application/json" `
             -Body $body
@@ -769,236 +814,53 @@ function Show-LoginMenu {
     
     switch ($choice) {
         "1" { 
-            if (Login-Admin) {
+            $loginSuccess = Login-Admin
+            if ($loginSuccess) {
                 while (Show-AdminDashboard) { }
             }
+            # If login failed, loop back to main menu
         }
         "2" { 
-            if (Login-Passenger) {
+            $loginSuccess = Login-Passenger
+            if ($loginSuccess) {
                 while (Show-PassengerDashboard) { }
             }
+            # If login failed, loop back to main menu
         }
         "3" { 
             Register-Passenger
+            # After registration, return to login menu
         }
         "0" { 
-            Write-Host "`n  Thank you for using Transport Ticketing System!" -ForegroundColor Green
-            Write-Host "  Goodbye!`n" -ForegroundColor Cyan
-            return $false
+            Write-Host "`n  Thank you for using the Transport Ticketing System!" -ForegroundColor Cyan
+            Write-Host ""
+            exit 
         }
         default { 
-            Write-Error "Invalid selection. Please try again."
-            Start-Sleep -Seconds 2
+            Write-Error "  Invalid choice"
+            Start-Sleep -Seconds 1
         }
     }
-    
-    return $true
 }
 
 # ============================================
-# INITIALIZATION AND MAIN EXECUTION
+# MAIN EXECUTION
 # ============================================
 
-function Initialize-Application {
-    Write-Title "TRANSPORT TICKETING SYSTEM"
-    Write-Host "Initializing application..." -ForegroundColor Yellow
-    
-    # Check if services are running
-    if (-not (Test-ServicesRunning)) {
-        Write-Error "Required services are not running."
-        Write-Host "Please ensure the following services are running:" -ForegroundColor Yellow
-        Write-Host "- Passenger Service (port 9090)" -ForegroundColor Gray
-        Write-Host "- Transport Service (port 9091)" -ForegroundColor Gray
-        Write-Host "- Ticketing Service (port 9096)" -ForegroundColor Gray
-        Write-Host "- Admin Service (port 9095)" -ForegroundColor Gray
-        Write-Host ""
-        Write-Host "Start services with: docker-compose up -d" -ForegroundColor Cyan
-        Read-Host "`nPress Enter to exit"
-        exit 1
-    }
-    
-    Write-Success "Services are running and accessible"
-    Start-Sleep -Seconds 1
-}
+Clear-Host
+Write-Title "TRANSPORT TICKETING SYSTEM"
+Write-Host "Checking if services are running..." -ForegroundColor Yellow
 
-function Main {
-    # Clear screen and show welcome
-    Clear-Host
-    
-    # Initialize application
-    Initialize-Application
+if (Test-ServicesRunning) {
+    Write-Success "All services are operational!"
+    Start-Sleep -Seconds 2
     
     # Main application loop
-    $running = $true
-    while ($running) {
-        try {
-            $running = Show-LoginMenu
-        }
-        catch {
-            Write-Error "An unexpected error occurred: $($_.Exception.Message)"
-            Write-Warning "Returning to main menu..."
-            Start-Sleep -Seconds 3
-        }
+    while ($true) {
+        Show-LoginMenu
     }
-}
-
-# ============================================
-# ADDITIONAL HELPER FUNCTIONS
-# ============================================
-
-function Get-UserInput {
-    param(
-        [string]$Prompt,
-        [string]$DefaultValue = "",
-        [switch]$Secure = $false,
-        [switch]$Mandatory = $false
-    )
-    
-    do {
-        if ($Secure) {
-            $input = Read-Host $Prompt -AsSecureString
-            if ($input) {
-                $plainText = [Runtime.InteropServices.Marshal]::PtrToStringAuto([Runtime.InteropServices.Marshal]::SecureStringToBSTR($input))
-                return $plainText
-            }
-        } else {
-            $input = Read-Host $Prompt
-            if ($input) {
-                return $input
-            } elseif ($DefaultValue) {
-                return $DefaultValue
-            }
-        }
-        
-        if ($Mandatory -and -not $input) {
-            Write-Error "This field is required. Please enter a value."
-        }
-    } while ($Mandatory -and -not $input)
-    
-    return $null
-}
-
-function Confirm-Action {
-    param(
-        [string]$Message = "Are you sure you want to continue?",
-        [string]$YesText = "Yes",
-        [string]$NoText = "No"
-    )
-    
-    $choice = $null
-    while ($choice -notin @('Y', 'N')) {
-        Write-Host "`n$Message" -ForegroundColor Yellow
-        Write-Host "Y: $YesText" -ForegroundColor Green
-        Write-Host "N: $NoText" -ForegroundColor Red
-        $choice = (Read-Host "Enter your choice (Y/N)").ToUpper()
-    }
-    
-    return $choice -eq 'Y'
-}
-
-function Show-SystemInfo {
-    Write-Title "SYSTEM INFORMATION"
-    
-    try {
-        # Test all services
-        $services = @(
-            @{Name = "Passenger Service"; Url = "http://localhost:9090/passenger/health"},
-            @{Name = "Transport Service"; Url = "http://localhost:9091/transport/health"},
-            @{Name = "Ticketing Service"; Url = "http://localhost:9096/ticketing/health"},
-            @{Name = "Admin Service"; Url = "http://localhost:9095/admin/health"}
-        )
-        
-        foreach ($service in $services) {
-            try {
-                $response = Invoke-RestMethod -Uri $service.Url -Method Get -TimeoutSec 3
-                Write-Host "✓ $($service.Name): RUNNING" -ForegroundColor Green
-            } catch {
-                Write-Host "✗ $($service.Name): OFFLINE" -ForegroundColor Red
-            }
-        }
-        
-        Write-Host ""
-        Write-Host "Current User: $(if($Global:CurrentUser){$Global:CurrentUser.Email}else{'Not logged in'})" -ForegroundColor Gray
-        Write-Host "User Role: $(if($Global:IsAdmin){'Administrator'}elseif($Global:CurrentUser){'Passenger'}else{'None'})" -ForegroundColor Gray
-        
-    } catch {
-        Write-Error "Unable to retrieve system information"
-    }
-    
-    Read-Host "`nPress Enter to continue"
-}
-# ============================================
-# ENHANCED ERROR HANDLING
-# ============================================
-
-function Invoke-SafeRestMethod {
-    param(
-        [string]$Uri,
-        [string]$Method = "Get",
-        [object]$Body = $null,
-        [string]$ContentType = "application/json",
-        [int]$TimeoutSec = 10
-    )
-    
-    try {
-        $params = @{
-            Uri = $Uri
-            Method = $Method
-            ContentType = $ContentType
-            TimeoutSec = $TimeoutSec
-        }
-        
-        if ($Body) {
-            $params.Body = if ($Body -is [string]) { $Body } else { $Body | ConvertTo-Json }
-        }
-        
-        return Invoke-RestMethod @params
-    }
-    catch {
-        $statusCode = $_.Exception.Response.StatusCode.value__
-        $message = $_.Exception.Message
-        
-        switch ($statusCode) {
-            400 { throw "Bad Request: The request was invalid. Please check your input." }
-            401 { throw "Unauthorized: Please login again." }
-            403 { throw "Forbidden: You don't have permission to perform this action." }
-            404 { throw "Not Found: The requested resource was not found." }
-            500 { throw "Internal Server Error: Please try again later." }
-            default { throw "Network Error: $message" }
-        }
-    }
-}
-
-# ============================================
-# SCRIPT EXECUTION
-# ============================================
-
-# Handle Ctrl+C gracefully
-$null = Register-EngineEvent -SourceIdentifier PowerShell.Exiting -Action {
-    if ($Global:CurrentUser) {
-        Write-Host "`nLogging out..." -ForegroundColor Yellow
-    }
-    Write-Host "Goodbye!" -ForegroundColor Cyan
-}
-
-# Set window title
-$Host.UI.RawUI.WindowTitle = "Transport Ticketing System Client"
-
-# Set encoding for proper character display
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
-
-# Main execution
-try {
-    Main
-}
-catch {
-    Write-Error "Fatal error: $($_.Exception.Message)"
-    Write-Host "The application will now exit." -ForegroundColor Red
-    Read-Host "Press Enter to continue"
-    exit 1
-}
-finally {
-    # Cleanup
-    $Global:CurrentUser = $null
-    $Global:IsAdmin = $false
+} else {
+    Write-Host "`nPlease start the services first:" -ForegroundColor Yellow
+    Write-Host "  docker-compose up -d" -ForegroundColor White
+    Write-Host ""
 }

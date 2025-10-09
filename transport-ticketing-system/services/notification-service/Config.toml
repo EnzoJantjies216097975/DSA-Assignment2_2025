@@ -1,15 +1,21 @@
-# Notification Service Configuration
+# Config.toml
+
+# MongoDB Configuration
 mongoHost = "mongodb"
 mongoPort = 27017
 mongoUsername = "admin"
 mongoPassword = "password123"
 mongoDatabase = "transport_db"
+
+# Kafka Configuration
 kafkaBootstrapServers = "kafka:9092"
-emailEnabled = false
-smtpHost = "smtp.example.com"
-smtpPort = 587
-smtpUsername = "noreply@transport.com"
-smtpPassword = "password"
-smsEnabled = false
-smsApiUrl = "https://api.sms-provider.com"
-smsApiKey = "your-api-key"
+zookeeperHost = "zookeeper"
+zookeeperPort = 2181
+
+# Service URLs
+passengerServiceUrl = "http://passenger-service:9090"
+transportServiceUrl = "http://transport-service:9091"
+ticketingServiceUrl = "http://ticketing-service:9092"
+paymentServiceUrl = "http://payment-service:9093"
+notificationServiceUrl = "http://notification-service:9094"
+adminServiceUrl = "http://admin-service:9095"
