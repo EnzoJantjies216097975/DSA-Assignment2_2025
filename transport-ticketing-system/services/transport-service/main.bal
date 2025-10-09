@@ -6,12 +6,12 @@ import ballerinax/mongodb;
 import ballerinax/kafka;
 
 // Configuration
-configurable string mongoHost = "mongodb";
-configurable int mongoPort = 27017;
-configurable string mongoUsername = "admin";
-configurable string mongoPassword = "password123";
-configurable string mongoDatabase = "transport_db";
-configurable string kafkaBootstrapServers = "kafka:9092";
+configurable string mongoHost = ?;
+configurable int mongoPort = ?;
+configurable string mongoUsername = ?;
+configurable string mongoPassword = ?;
+configurable string mongoDatabase = ?;
+configurable string kafkaBootstrapServers = ?;
 
 // MongoDB client
 final mongodb:Client mongoClient = check new ({
@@ -35,8 +35,8 @@ final kafka:Producer kafkaProducer = check new (kafka:DEFAULT_URL, {
     retryCount: 3
 });
 
-// Types
-public type Route record {|
+// Types - Made more flexible to handle MongoDB data
+public type Route record {
     string id;
     string routeNumber;
     string routeName;
@@ -47,9 +47,9 @@ public type Route record {|
     boolean active;
     string createdAt;
     string updatedAt?;
-|};
+};
 
-public type Trip record {|
+public type Trip record {
     string id;
     string routeId;
     string departureTime;
@@ -60,7 +60,7 @@ public type Trip record {|
     string status;
     string createdAt;
     string updatedAt?;
-|};
+};
 
 public type CreateRouteRequest record {|
     string routeNumber;
@@ -98,12 +98,13 @@ service /transport on new http:Listener(9091) {
     resource function post routes(CreateRouteRequest request) returns http:Created|http:BadRequest|http:InternalServerError {
         do {
             if request.routeNumber.trim() == "" || request.routeName.trim() == "" {
-                return <http:BadRequest>{
+                http:BadRequest badRequest = {
                     body: {
                         message: "Route number and name are required",
                         timestamp: time:utcToString(time:utcNow())
                     }
                 };
+                return badRequest;
             }
 
             mongodb:Database db = check mongoClient->getDatabase(mongoDatabase);
@@ -127,75 +128,114 @@ service /transport on new http:Listener(9091) {
             check routesCollection->insertOne(newRoute);
             log:printInfo(string `New route created: ${request.routeNumber}`);
             
-            return <http:Created>{
+            http:Created created = {
                 body: {
                     message: "Route created successfully",
                     routeId: routeId
                 }
             };
+            return created;
 
         } on fail error e {
-            log:printError("Error creating route", 'error = e);
-            return <http:InternalServerError>{
+            log:printError("Error creating route", 'error = e, stackTrace = e.stackTrace());
+            http:InternalServerError internalError = {
                 body: {
-                    message: "Failed to create route",
+                    message: string `Failed to create route: ${e.message()}`,
                     timestamp: time:utcToString(time:utcNow())
                 }
             };
+            return internalError;
         }
     }
 
-    // Get all routes
-    resource function get routes() returns Route[]|http:InternalServerError {
+    // Get all routes - FIXED VERSION
+    resource function get routes() returns json[]|http:InternalServerError {
         do {
             mongodb:Database db = check mongoClient->getDatabase(mongoDatabase);
             mongodb:Collection routesCollection = check db->getCollection("routes");
 
-            stream<Route, error?> routes = check routesCollection->find({});
-            Route[] routeArray = check from Route route in routes select route;
+            // Use projection to exclude _id field
+            map<json> projection = {"_id": 0};
+            stream<map<json>, error?> routeStream = check routesCollection->find({}, projection = projection);
             
-            return routeArray;
+            json[] routes = [];
+            error? e = routeStream.forEach(function(map<json> route) {
+                routes.push(route);
+            });
+            
+            if e is error {
+                log:printError("Error processing routes", 'error = e);
+                http:InternalServerError internalError = {
+                    body: {
+                        message: "Failed to process routes",
+                        timestamp: time:utcToString(time:utcNow())
+                    }
+                };
+                return internalError;
+            }
+            
+            log:printInfo(string `Fetched ${routes.length()} routes`);
+            return routes;
 
         } on fail error e {
-            log:printError("Error fetching routes", 'error = e);
-            return <http:InternalServerError>{
+            log:printError("Error fetching routes", 'error = e, stackTrace = e.stackTrace());
+            http:InternalServerError internalError = {
                 body: {
-                    message: "Failed to fetch routes",
+                    message: string `Failed to fetch routes: ${e.message()}`,
                     timestamp: time:utcToString(time:utcNow())
                 }
             };
+            return internalError;
         }
     }
 
     // Get route by ID
-    resource function get routes/[string routeId]() returns Route|http:NotFound|http:InternalServerError {
+    resource function get routes/[string routeId]() returns json|http:NotFound|http:InternalServerError {
         do {
             mongodb:Database db = check mongoClient->getDatabase(mongoDatabase);
             mongodb:Collection routesCollection = check db->getCollection("routes");
 
             map<json> query = {"id": routeId};
-            stream<Route, error?> routes = check routesCollection->find(query);
-            Route[]|error routeArray = from Route route in routes select route;
+            map<json> projection = {"_id": 0};
+            stream<map<json>, error?> routes = check routesCollection->find(query, projection = projection);
             
-            if routeArray is Route[] && routeArray.length() > 0 {
+            map<json>[] routeArray = [];
+            error? e = routes.forEach(function(map<json> route) {
+                routeArray.push(route);
+            });
+            
+            if e is error {
+                log:printError("Error processing route", 'error = e);
+                http:InternalServerError internalError = {
+                    body: {
+                        message: "Failed to process route",
+                        timestamp: time:utcToString(time:utcNow())
+                    }
+                };
+                return internalError;
+            }
+            
+            if routeArray.length() > 0 {
                 return routeArray[0];
             } else {
-                return <http:NotFound>{
+                http:NotFound notFound = {
                     body: {
                         message: "Route not found",
                         timestamp: time:utcToString(time:utcNow())
                     }
                 };
+                return notFound;
             }
 
         } on fail error e {
-            log:printError("Error fetching route", 'error = e);
-            return <http:InternalServerError>{
+            log:printError("Error fetching route", 'error = e, stackTrace = e.stackTrace());
+            http:InternalServerError internalError = {
                 body: {
-                    message: "Failed to fetch route",
+                    message: string `Failed to fetch route: ${e.message()}`,
                     timestamp: time:utcToString(time:utcNow())
                 }
             };
+            return internalError;
         }
     }
 
@@ -223,98 +263,153 @@ service /transport on new http:Listener(9091) {
             check tripsCollection->insertOne(newTrip);
             log:printInfo(string `New trip created: ${tripId}`);
             
-            return <http:Created>{
+            http:Created created = {
                 body: {
                     message: "Trip created successfully",
                     tripId: tripId
                 }
             };
+            return created;
 
         } on fail error e {
-            log:printError("Error creating trip", 'error = e);
-            return <http:InternalServerError>{
+            log:printError("Error creating trip", 'error = e, stackTrace = e.stackTrace());
+            http:InternalServerError internalError = {
                 body: {
-                    message: "Failed to create trip",
+                    message: string `Failed to create trip: ${e.message()}`,
                     timestamp: time:utcToString(time:utcNow())
                 }
             };
+            return internalError;
         }
     }
 
-    // Get all trips
-    resource function get trips() returns Trip[]|http:InternalServerError {
+    // Get all trips 
+    resource function get trips() returns json[]|http:InternalServerError {
         do {
             mongodb:Database db = check mongoClient->getDatabase(mongoDatabase);
             mongodb:Collection tripsCollection = check db->getCollection("trips");
 
-            stream<Trip, error?> trips = check tripsCollection->find({});
-            Trip[] tripArray = check from Trip trip in trips select trip;
+            map<json> projection = {"_id": 0};
+            stream<map<json>, error?> tripStream = check tripsCollection->find({}, projection = projection);
             
-            return tripArray;
+            json[] trips = [];
+            error? e = tripStream.forEach(function(map<json> trip) {
+                trips.push(trip);
+            });
+            
+            if e is error {
+                log:printError("Error processing trips", 'error = e);
+                http:InternalServerError internalError = {
+                    body: {
+                        message: "Failed to process trips",
+                        timestamp: time:utcToString(time:utcNow())
+                    }
+                };
+                return internalError;
+            }
+            
+            log:printInfo(string `Fetched ${trips.length()} trips`);
+            return trips;
 
         } on fail error e {
-            log:printError("Error fetching trips", 'error = e);
-            return <http:InternalServerError>{
+            log:printError("Error fetching trips", 'error = e, stackTrace = e.stackTrace());
+            http:InternalServerError internalError = {
                 body: {
-                    message: "Failed to fetch trips",
+                    message: string `Failed to fetch trips: ${e.message()}`,
                     timestamp: time:utcToString(time:utcNow())
                 }
             };
+            return internalError;
         }
     }
 
     // Get trips by route
-    resource function get routes/[string routeId]/trips() returns Trip[]|http:InternalServerError {
+    resource function get routes/[string routeId]/trips() returns json[]|http:InternalServerError {
         do {
             mongodb:Database db = check mongoClient->getDatabase(mongoDatabase);
             mongodb:Collection tripsCollection = check db->getCollection("trips");
 
             map<json> query = {"routeId": routeId};
-            stream<Trip, error?> trips = check tripsCollection->find(query);
-            Trip[] tripArray = check from Trip trip in trips select trip;
+            map<json> projection = {"_id": 0};
+            stream<map<json>, error?> tripStream = check tripsCollection->find(query, projection = projection);
             
-            return tripArray;
+            json[] trips = [];
+            error? e = tripStream.forEach(function(map<json> trip) {
+                trips.push(trip);
+            });
+            
+            if e is error {
+                log:printError("Error processing trips for route", 'error = e);
+                http:InternalServerError internalError = {
+                    body: {
+                        message: "Failed to process trips",
+                        timestamp: time:utcToString(time:utcNow())
+                    }
+                };
+                return internalError;
+            }
+            
+            return trips;
 
         } on fail error e {
-            log:printError("Error fetching trips for route", 'error = e);
-            return <http:InternalServerError>{
+            log:printError("Error fetching trips for route", 'error = e, stackTrace = e.stackTrace());
+            http:InternalServerError internalError = {
                 body: {
-                    message: "Failed to fetch trips",
+                    message: string `Failed to fetch trips: ${e.message()}`,
                     timestamp: time:utcToString(time:utcNow())
                 }
             };
+            return internalError;
         }
     }
 
     // Get trip by ID
-    resource function get trips/[string tripId]() returns Trip|http:NotFound|http:InternalServerError {
+    resource function get trips/[string tripId]() returns json|http:NotFound|http:InternalServerError {
         do {
             mongodb:Database db = check mongoClient->getDatabase(mongoDatabase);
             mongodb:Collection tripsCollection = check db->getCollection("trips");
 
             map<json> query = {"id": tripId};
-            stream<Trip, error?> trips = check tripsCollection->find(query);
-            Trip[]|error tripArray = from Trip trip in trips select trip;
+            map<json> projection = {"_id": 0};
+            stream<map<json>, error?> trips = check tripsCollection->find(query, projection = projection);
             
-            if tripArray is Trip[] && tripArray.length() > 0 {
+            map<json>[] tripArray = [];
+            error? e = trips.forEach(function(map<json> trip) {
+                tripArray.push(trip);
+            });
+            
+            if e is error {
+                log:printError("Error processing trip", 'error = e);
+                http:InternalServerError internalError = {
+                    body: {
+                        message: "Failed to process trip",
+                        timestamp: time:utcToString(time:utcNow())
+                    }
+                };
+                return internalError;
+            }
+            
+            if tripArray.length() > 0 {
                 return tripArray[0];
             } else {
-                return <http:NotFound>{
+                http:NotFound notFound = {
                     body: {
                         message: "Trip not found",
                         timestamp: time:utcToString(time:utcNow())
                     }
                 };
+                return notFound;
             }
 
         } on fail error e {
-            log:printError("Error fetching trip", 'error = e);
-            return <http:InternalServerError>{
+            log:printError("Error fetching trip", 'error = e, stackTrace = e.stackTrace());
+            http:InternalServerError internalError = {
                 body: {
-                    message: "Failed to fetch trip",
+                    message: string `Failed to fetch trip: ${e.message()}`,
                     timestamp: time:utcToString(time:utcNow())
                 }
             };
+            return internalError;
         }
     }
 
@@ -326,19 +421,25 @@ service /transport on new http:Listener(9091) {
 
             // Check if trip exists
             map<json> query = {"id": tripId};
-            stream<Trip, error?> trips = check tripsCollection->find(query);
-            Trip[]|error tripArray = from Trip trip in trips select trip;
+            map<json> projection = {"_id": 0};
+            stream<map<json>, error?> trips = check tripsCollection->find(query, projection = projection);
             
-            if tripArray is error || (tripArray is Trip[] && tripArray.length() == 0) {
-                return <http:NotFound>{
+            map<json>[] tripArray = [];
+            error? e = trips.forEach(function(map<json> trip) {
+                tripArray.push(trip);
+            });
+            
+            if e is error || tripArray.length() == 0 {
+                http:NotFound notFound = {
                     body: {
                         message: "Trip not found",
                         timestamp: time:utcToString(time:utcNow())
                     }
                 };
+                return notFound;
             }
 
-            Trip existingTrip = tripArray[0];
+            map<json> existingTrip = tripArray[0];
             string currentTime = time:utcToString(time:utcNow());
 
             // Update trip status
@@ -352,8 +453,9 @@ service /transport on new http:Listener(9091) {
             mongodb:UpdateResult updateResult = check tripsCollection->updateOne(query, update);
             
             // Publish schedule update event to Kafka
+            string routeId = existingTrip["routeId"].toString();
             ScheduleUpdateEvent updateEvent = {
-                routeId: existingTrip.routeId,
+                routeId: routeId,
                 tripId: tripId,
                 updateType: request.status,
                 message: request.reason ?: string `Trip status updated to ${request.status}`,
@@ -367,21 +469,23 @@ service /transport on new http:Listener(9091) {
 
             log:printInfo(string `Trip ${tripId} status updated to ${request.status}`);
             
-            return <http:Ok>{
+            http:Ok ok = {
                 body: {
                     message: "Trip status updated successfully",
                     status: request.status
                 }
             };
+            return ok;
 
         } on fail error e {
-            log:printError("Error updating trip status", 'error = e);
-            return <http:InternalServerError>{
+            log:printError("Error updating trip status", 'error = e, stackTrace = e.stackTrace());
+            http:InternalServerError internalError = {
                 body: {
-                    message: "Failed to update trip status",
+                    message: string `Failed to update trip status: ${e.message()}`,
                     timestamp: time:utcToString(time:utcNow())
                 }
             };
+            return internalError;
         }
     }
 }
